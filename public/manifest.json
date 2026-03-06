@@ -1,0 +1,8 @@
+{
+  "name": "Bone Dunes",
+  "short_name": "Bone Dunes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#120c09",
+  "theme_color": "#1d140f"
+}
