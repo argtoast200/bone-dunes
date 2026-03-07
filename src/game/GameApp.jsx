@@ -19,7 +19,7 @@ const initialState = {
   upgradeEntries: [],
   hasSave: false,
   canUpgrade: false,
-  controlsHint: "WASD move, click or Space bite, F fullscreen",
+  controlsHint: "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen",
 };
 
 function MobileButton({ label, onPressStart, onPressEnd, className = "" }) {
@@ -210,9 +210,10 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div>
                     <h3>Controls</h3>
-                    <p>`WASD` move</p>
+                    <p>`Left click` move target</p>
+                    <p>`WASD` or `Arrows` steer</p>
                     <p>`Shift` sprint</p>
-                    <p>`Click` or `Space` bite</p>
+                    <p>`Space` or `Right click` bite</p>
                     <p>`F` fullscreen</p>
                   </div>
                   <div>

@@ -19,10 +19,29 @@ const PLAYER_HEIGHT = 2.2;
 const CAMERA_HEIGHT = 5.8;
 const CAMERA_DISTANCE = 10.5;
 const ATTACK_DURATION = 0.28;
+const ATTACK_LUNGE_DURATION = 0.14;
+const ATTACK_LUNGE_SPEED = 10.5;
+const MOVE_TARGET_STOP_DISTANCE = 1.25;
+const BLOCKED_BROWSER_KEYS = new Set([
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "ShiftLeft",
+  "ShiftRight",
+  "Space",
+  "KeyF",
+]);
 
 const vectorA = new THREE.Vector3();
 const vectorB = new THREE.Vector3();
 const vectorC = new THREE.Vector3();
+const vectorD = new THREE.Vector3();
+const upVector = new THREE.Vector3(0, 1, 0);
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -332,6 +351,12 @@ export class SporeSliceGame {
     this.playerVelocity = new THREE.Vector3();
     this.cameraTarget = new THREE.Vector3();
     this.cameraGoal = new THREE.Vector3();
+    this.pointerNdc = new THREE.Vector2();
+    this.raycaster = new THREE.Raycaster();
+    this.moveTarget = {
+      active: false,
+      position: new THREE.Vector3(),
+    };
     this.player = this.buildPlayer();
     this.foods = [];
     this.enemies = [];
@@ -339,11 +364,13 @@ export class SporeSliceGame {
     this.scene.add(this.pickupPulse);
 
     this.world = buildWorld(this.scene);
+    this.moveTargetMarker = this.buildMoveTargetMarker();
     this.setupLights();
     this.spawnFoods();
     this.spawnEnemies();
 
     this.scene.add(this.player.group);
+    this.scene.add(this.moveTargetMarker.group);
     this.resetPlayerToNest(true);
     this.applyUpgradeVisuals();
     this.resize = this.resize.bind(this);
@@ -351,17 +378,24 @@ export class SporeSliceGame {
     this.handleKey = this.handleKey.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
+    this.handleContextMenu = this.handleContextMenu.bind(this);
+    this.handleBlur = this.handleBlur.bind(this);
 
     window.addEventListener("resize", this.resize);
     window.addEventListener("keydown", this.handleKey);
     window.addEventListener("keyup", this.handleKey);
-    window.addEventListener("mousedown", this.handleMouseDown);
-    window.addEventListener("mouseup", this.handleMouseUp);
+    window.addEventListener("blur", this.handleBlur);
+    this.renderer.domElement.addEventListener("mousedown", this.handleMouseDown);
+    this.renderer.domElement.addEventListener("mouseup", this.handleMouseUp);
+    this.renderer.domElement.addEventListener("contextmenu", this.handleContextMenu);
 
     this.installTestingHooks();
     this.resize();
     this.emitState();
     this.render();
+    if (new URLSearchParams(window.location.search).get("autostart") === "1") {
+      this.startGame();
+    }
     this.animationFrame = window.requestAnimationFrame(this.tick);
   }
 
@@ -415,12 +449,59 @@ export class SporeSliceGame {
       maxHealth: this.playerStats.health,
       attackTimer: 0,
       attackCooldown: 0,
+      attackLungeTimer: 0,
       invulnerability: 0,
       hurtTint: 0,
       stepCycle: 0,
       attackSwingId: 0,
       groundMarker,
     };
+  }
+
+  buildMoveTargetMarker() {
+    const group = new THREE.Group();
+    group.visible = false;
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 1.02, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x85ffe8,
+        transparent: true,
+        opacity: 0.42,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    group.add(ring);
+
+    const pulse = new THREE.Mesh(
+      new THREE.RingGeometry(1.08, 1.26, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0xbffff3,
+        transparent: true,
+        opacity: 0.22,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    pulse.rotation.x = -Math.PI / 2;
+    pulse.position.y = 0.02;
+    group.add(pulse);
+
+    const spike = new THREE.Mesh(
+      new THREE.ConeGeometry(0.18, 0.72, 5),
+      new THREE.MeshBasicMaterial({
+        color: 0xdffff8,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+      }),
+    );
+    spike.position.y = 0.48;
+    group.add(spike);
+
+    return { group, ring, pulse, spike };
   }
 
   setupLights() {
@@ -513,22 +594,38 @@ export class SporeSliceGame {
 
   handleKey(event) {
     const pressed = event.type === "keydown";
+    if (BLOCKED_BROWSER_KEYS.has(event.code)) {
+      event.preventDefault();
+    }
+
     switch (event.code) {
       case "KeyW":
       case "ArrowUp":
         this.input.forward = pressed;
+        if (pressed) {
+          this.clearMoveTarget();
+        }
         break;
       case "KeyS":
       case "ArrowDown":
         this.input.backward = pressed;
+        if (pressed) {
+          this.clearMoveTarget();
+        }
         break;
       case "KeyA":
       case "ArrowLeft":
         this.input.left = pressed;
+        if (pressed) {
+          this.clearMoveTarget();
+        }
         break;
       case "KeyD":
       case "ArrowRight":
         this.input.right = pressed;
+        if (pressed) {
+          this.clearMoveTarget();
+        }
         break;
       case "ShiftLeft":
       case "ShiftRight":
@@ -549,12 +646,46 @@ export class SporeSliceGame {
     }
   }
 
-  handleMouseDown() {
-    this.input.attackHeld = true;
-    this.queueAttack();
+  handleMouseDown(event) {
+    this.renderer.domElement.focus();
+    if (event.button === 2) {
+      event.preventDefault();
+      this.input.attackHeld = true;
+      this.queueAttack();
+      return;
+    }
+
+    if (event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    if (this.state.mode !== "playing" || this.state.respawnTimer > 0) {
+      return;
+    }
+
+    const moveTarget = this.getGroundTargetFromPointer(event.clientX, event.clientY);
+    if (moveTarget) {
+      this.setMoveTarget(moveTarget);
+    }
   }
 
-  handleMouseUp() {
+  handleMouseUp(event) {
+    if (event.button === 2) {
+      this.input.attackHeld = false;
+    }
+  }
+
+  handleContextMenu(event) {
+    event.preventDefault();
+  }
+
+  handleBlur() {
+    this.input.forward = false;
+    this.input.backward = false;
+    this.input.left = false;
+    this.input.right = false;
+    this.input.sprint = false;
     this.input.attackHeld = false;
   }
 
@@ -576,6 +707,45 @@ export class SporeSliceGame {
     this.input.attackQueued = true;
   }
 
+  getGroundTargetFromPointer(clientX, clientY) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return null;
+    }
+
+    this.pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointerNdc.y = 1 - ((clientY - rect.top) / rect.height) * 2;
+    this.raycaster.setFromCamera(this.pointerNdc, this.camera);
+
+    const [hit] = this.raycaster.intersectObject(this.world.terrain, false);
+    if (!hit) {
+      return null;
+    }
+
+    const point = hit.point.clone();
+    point.x = clamp(point.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+    point.z = clamp(point.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+    point.y = getTerrainHeight(point.x, point.z);
+    return point;
+  }
+
+  setMoveTarget(target) {
+    if (getDistance2D(this.player.group.position, target) <= MOVE_TARGET_STOP_DISTANCE) {
+      this.clearMoveTarget();
+      return;
+    }
+
+    this.moveTarget.active = true;
+    this.moveTarget.position.copy(target);
+    this.moveTargetMarker.group.visible = true;
+    this.moveTargetMarker.group.position.set(target.x, target.y + 0.08, target.z);
+  }
+
+  clearMoveTarget() {
+    this.moveTarget.active = false;
+    this.moveTargetMarker.group.visible = false;
+  }
+
   toggleFullscreen() {
     if (!document.fullscreenElement) {
       this.container.requestFullscreen?.();
@@ -586,6 +756,7 @@ export class SporeSliceGame {
   }
 
   installTestingHooks() {
+    window.__sporeSliceGameInstance = this;
     window.advanceTime = (ms = 16) => {
       this.manualStepping = true;
       const frames = Math.max(1, Math.round(ms / (FIXED_STEP * 1000)));
@@ -632,7 +803,15 @@ export class SporeSliceGame {
           dna: this.state.dna,
           atNest: this.state.zone === "nest",
           attackReady: this.player.attackCooldown <= 0,
+          sprinting: this.input.sprint,
         },
+        moveTarget: this.moveTarget.active
+          ? {
+              x: Number(this.moveTarget.position.x.toFixed(1)),
+              z: Number(this.moveTarget.position.z.toFixed(1)),
+              distance: Number(getDistance2D(playerPosition, this.moveTarget.position).toFixed(1)),
+            }
+          : null,
         upgrades: this.state.upgrades,
         food: nearbyFoods,
         enemies: nearbyEnemies,
@@ -714,8 +893,10 @@ export class SporeSliceGame {
     this.player.maxHealth = this.playerStats.health;
     this.player.attackCooldown = initial ? 0 : 0.6;
     this.player.attackTimer = 0;
+    this.player.attackLungeTimer = 0;
     this.player.invulnerability = 1.2;
     this.player.hurtTint = 0;
+    this.clearMoveTarget();
   }
 
   respawnEnemy(enemy) {
@@ -771,20 +952,32 @@ export class SporeSliceGame {
 
   findAttackTarget() {
     let bestTarget = null;
-    let bestDistance = Number.POSITIVE_INFINITY;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const forward = vectorD.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
 
     this.enemies.forEach((enemy) => {
       if (enemy.deadTimer > 0) {
         return;
       }
 
-      const distance = getDistance2D(this.player.group.position, enemy.group.position);
-      const range = enemy.type === "predator" ? 4.6 : 3.9;
-      if (distance >= range || distance >= bestDistance) {
+      vectorA.subVectors(enemy.group.position, this.player.group.position).setY(0);
+      const distance = vectorA.length();
+      const range = enemy.type === "predator" ? 5.4 : 4.7;
+      if (distance >= range) {
         return;
       }
 
-      bestDistance = distance;
+      if (distance > 0.001) {
+        vectorA.divideScalar(distance);
+      }
+
+      const alignment = vectorA.dot(forward);
+      const score = distance + (1 - alignment) * 1.35;
+      if (score >= bestScore) {
+        return;
+      }
+
+      bestScore = score;
       bestTarget = enemy;
     });
 
@@ -798,6 +991,7 @@ export class SporeSliceGame {
 
     this.player.attackTimer = ATTACK_DURATION;
     this.player.attackCooldown = 0.62;
+    this.player.attackLungeTimer = ATTACK_LUNGE_DURATION;
     this.player.attackSwingId += 1;
 
     const lockedTarget = this.findAttackTarget();
@@ -809,7 +1003,7 @@ export class SporeSliceGame {
       }
     }
 
-    const forward = new THREE.Vector3(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
+    const forward = vectorD.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
     const playerPosition = this.player.group.position;
 
     this.enemies.forEach((enemy) => {
@@ -819,14 +1013,14 @@ export class SporeSliceGame {
 
       vectorA.subVectors(enemy.group.position, playerPosition);
       const horizontalDistance = Math.hypot(vectorA.x, vectorA.z);
-      if (horizontalDistance > (enemy.type === "predator" ? 4.1 : 3.4)) {
+      if (horizontalDistance > (enemy.type === "predator" ? 4.8 : 4.1)) {
         return;
       }
 
       vectorA.y = 0;
       vectorA.normalize();
       const dot = vectorA.dot(forward);
-      const dotThreshold = enemy === lockedTarget ? -0.55 : 0.02;
+      const dotThreshold = enemy === lockedTarget ? -0.7 : -0.1;
       if (dot < dotThreshold) {
         return;
       }
@@ -968,22 +1162,53 @@ export class SporeSliceGame {
       return;
     }
 
-    const moveX = Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
-    const moveZ = Number(this.input.backward || this.virtualInput.backward) - Number(this.input.forward || this.virtualInput.forward);
-    const inputVector = vectorA.set(moveX, 0, moveZ);
-    const moving = inputVector.lengthSq() > 0;
+    const moveForward = Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
+    const moveStrafe = Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
+    const hasDirectInput = moveForward !== 0 || moveStrafe !== 0;
+    const desiredDirection = vectorA.set(0, 0, 0);
+    let moving = false;
 
-    if (moving) {
-      inputVector.normalize();
+    if (hasDirectInput) {
+      this.camera.getWorldDirection(vectorB);
+      vectorB.y = 0;
+      if (vectorB.lengthSq() <= 0.0001) {
+        vectorB.set(0, 0, 1);
+      } else {
+        vectorB.normalize();
+      }
+
+      vectorC.crossVectors(vectorB, upVector).normalize();
+      desiredDirection.copy(vectorC).multiplyScalar(moveStrafe).addScaledVector(vectorB, moveForward);
+      if (desiredDirection.lengthSq() > 1) {
+        desiredDirection.normalize();
+      }
+      moving = desiredDirection.lengthSq() > 0.0001;
+    } else if (this.moveTarget.active) {
+      desiredDirection.subVectors(this.moveTarget.position, this.player.group.position).setY(0);
+      const distanceToTarget = desiredDirection.length();
+      if (distanceToTarget <= MOVE_TARGET_STOP_DISTANCE) {
+        this.clearMoveTarget();
+      } else {
+        desiredDirection.divideScalar(distanceToTarget);
+        moving = true;
+      }
     }
 
     const sprintBonus = this.input.sprint ? 1.08 : 1;
     const desiredSpeed = moving ? this.playerStats.speed * sprintBonus : 0;
-    const desiredVelocity = vectorB.copy(inputVector).multiplyScalar(desiredSpeed);
-    dampVector(this.player.velocity, desiredVelocity, moving ? 12 : 8, dt);
+    const desiredVelocity = vectorD.copy(desiredDirection).multiplyScalar(desiredSpeed);
 
-    if (moving) {
-      const desiredYaw = Math.atan2(this.player.velocity.x || inputVector.x, this.player.velocity.z || inputVector.z);
+    this.player.attackLungeTimer = Math.max(0, this.player.attackLungeTimer - dt);
+    if (this.player.attackLungeTimer > 0) {
+      vectorB.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
+      desiredVelocity.addScaledVector(vectorB, ATTACK_LUNGE_SPEED * (this.player.attackLungeTimer / ATTACK_LUNGE_DURATION));
+    }
+
+    dampVector(this.player.velocity, desiredVelocity, moving ? 14 : 8, dt);
+
+    if (moving || this.player.attackLungeTimer > 0 || this.player.velocity.lengthSq() > 0.04) {
+      const yawSource = this.player.velocity.lengthSq() > 0.04 ? this.player.velocity : desiredDirection;
+      const desiredYaw = Math.atan2(yawSource.x, yawSource.z);
       const yawDelta = normalizeAngle(desiredYaw - this.player.yaw);
       this.player.yaw = normalizeAngle(this.player.yaw + yawDelta * (1 - Math.exp(-16 * dt)));
     }
@@ -1072,6 +1297,23 @@ export class SporeSliceGame {
     this.world.dust.rotation.y += dt * 0.015;
   }
 
+  updateMoveTargetMarker(dt) {
+    if (!this.moveTarget.active) {
+      return;
+    }
+
+    this.moveTargetMarker.group.position.set(
+      this.moveTarget.position.x,
+      getTerrainHeight(this.moveTarget.position.x, this.moveTarget.position.z) + 0.08,
+      this.moveTarget.position.z,
+    );
+    this.moveTargetMarker.ring.rotation.z += dt * 0.75;
+    this.moveTargetMarker.pulse.rotation.z -= dt * 0.45;
+    const pulseScale = 1 + Math.sin(this.elapsed * 5.8) * 0.08;
+    this.moveTargetMarker.pulse.scale.setScalar(pulseScale);
+    this.moveTargetMarker.spike.position.y = 0.48 + Math.sin(this.elapsed * 7.2) * 0.08;
+  }
+
   update(dt) {
     this.elapsed += dt;
     this.updateAmbient(dt);
@@ -1079,6 +1321,7 @@ export class SporeSliceGame {
     this.updateFood(dt);
     this.updateEnemies(dt);
     this.updateCamera(dt);
+    this.updateMoveTargetMarker(dt);
 
     if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
       this.state.message = "The air thickens with heat. Better rewards, worse odds.";
@@ -1133,8 +1376,8 @@ export class SporeSliceGame {
       hasSave: this.state.hasSave,
       canUpgrade: this.state.zone === "nest" && this.state.mode !== "menu",
       controlsHint: this.state.mode === "menu"
-        ? "WASD to roam, click or Space to bite, F for fullscreen"
-        : "WASD move, Shift sprint, click or Space bite, F fullscreen",
+        ? "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen"
+        : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite",
     });
   }
 
@@ -1143,14 +1386,19 @@ export class SporeSliceGame {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.handleKey);
     window.removeEventListener("keyup", this.handleKey);
-    window.removeEventListener("mousedown", this.handleMouseDown);
-    window.removeEventListener("mouseup", this.handleMouseUp);
+    window.removeEventListener("blur", this.handleBlur);
+    this.renderer.domElement.removeEventListener("mousedown", this.handleMouseDown);
+    this.renderer.domElement.removeEventListener("mouseup", this.handleMouseUp);
+    this.renderer.domElement.removeEventListener("contextmenu", this.handleContextMenu);
 
     if (window.advanceTime) {
       delete window.advanceTime;
     }
     if (window.render_game_to_text) {
       delete window.render_game_to_text;
+    }
+    if (window.__sporeSliceGameInstance === this) {
+      delete window.__sporeSliceGameInstance;
     }
 
     this.renderer.dispose();
