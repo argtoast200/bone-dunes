@@ -1,4 +1,4 @@
-import { SPECIES_DEFS, UPGRADE_DEFS } from "./config";
+import { BIOME_DEFS, SPECIES_DEFS, UPGRADE_DEFS } from "./config";
 
 const STORAGE_KEY = "bone-dunes-save-v1";
 export const MAX_SPECIES_CREATURES = 6;
@@ -23,6 +23,41 @@ export const DEFAULT_TRAIT_BLUEPRINTS = UPGRADE_DEFS.reduce((blueprints, upgrade
   blueprints[upgrade.key] = upgrade.unlock?.type === "starter";
   return blueprints;
 }, {});
+
+export function createDefaultBiomeProgress({ legacy = false } = {}) {
+  const biomeKeys = Object.keys(BIOME_DEFS);
+  const mastery = biomeKeys.reduce((entries, biomeKey) => {
+    entries[biomeKey] = 0;
+    return entries;
+  }, {});
+
+  if (legacy) {
+    mastery.originWaters = 7;
+    mastery.sunlitShallows = 9;
+    mastery.glowMarsh = 11;
+    mastery.boneDunes = 22;
+    mastery.jawBasin = 14;
+    return {
+      originStarted: true,
+      unlockedBiomes: [...biomeKeys],
+      discoveredBiomes: [...biomeKeys],
+      dominantBiome: "boneDunes",
+      mastery,
+    };
+  }
+
+  mastery.originWaters = 10;
+  mastery.sunlitShallows = 3;
+  return {
+    originStarted: true,
+    unlockedBiomes: ["originWaters", "sunlitShallows"],
+    discoveredBiomes: ["originWaters", "sunlitShallows"],
+    dominantBiome: "originWaters",
+    mastery,
+  };
+}
+
+export const DEFAULT_BIOME_PROGRESS = createDefaultBiomeProgress();
 
 export const DEFAULT_SPECIES_RELATIONS = Object.values(SPECIES_DEFS).reduce((relations, species) => {
   relations[species.id] = {
@@ -162,6 +197,31 @@ function sanitizeTraitBlueprints(rawBlueprints, speciesCreatures, evolutionDraft
   return blueprints;
 }
 
+function sanitizeBiomeProgress(rawBiomeProgress, fallback = DEFAULT_BIOME_PROGRESS) {
+  const biomeKeys = Object.keys(BIOME_DEFS);
+  const unlockedSource = Array.isArray(rawBiomeProgress?.unlockedBiomes) ? rawBiomeProgress.unlockedBiomes : fallback.unlockedBiomes;
+  const discoveredSource = Array.isArray(rawBiomeProgress?.discoveredBiomes) ? rawBiomeProgress.discoveredBiomes : fallback.discoveredBiomes;
+  const unlockedBiomes = biomeKeys.filter((biomeKey) => unlockedSource.includes(biomeKey));
+  const discoveredBiomes = biomeKeys.filter((biomeKey) => discoveredSource.includes(biomeKey) || unlockedBiomes.includes(biomeKey));
+  const mastery = biomeKeys.reduce((entries, biomeKey) => {
+    const fallbackValue = fallback.mastery?.[biomeKey] ?? 0;
+    const rawValue = rawBiomeProgress?.mastery?.[biomeKey];
+    entries[biomeKey] = Number.isFinite(rawValue) ? clamp(rawValue, 0, 100) : fallbackValue;
+    return entries;
+  }, {});
+  const dominantBiome = typeof rawBiomeProgress?.dominantBiome === "string" && biomeKeys.includes(rawBiomeProgress.dominantBiome)
+    ? rawBiomeProgress.dominantBiome
+    : fallback.dominantBiome;
+
+  return {
+    originStarted: rawBiomeProgress?.originStarted !== false,
+    unlockedBiomes: unlockedBiomes.length ? unlockedBiomes : [...fallback.unlockedBiomes],
+    discoveredBiomes: discoveredBiomes.length ? discoveredBiomes : [...fallback.discoveredBiomes],
+    dominantBiome,
+    mastery,
+  };
+}
+
 function createCreatureId() {
   return `creature-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -231,7 +291,7 @@ function buildDefaultSave() {
   const starterCreature = createSpeciesCreature({
     traits: DEFAULT_TRAITS,
     profile: createRandomCreatureProfile(),
-    growth: 1,
+    growth: 0.22,
     generation: 1,
   });
 
@@ -247,6 +307,7 @@ function buildDefaultSave() {
     alignment: { ...DEFAULT_ALIGNMENT },
     traitBlueprints: sanitizeTraitBlueprints(DEFAULT_TRAIT_BLUEPRINTS, [starterCreature], createEvolutionDraft(starterCreature)),
     speciesRelations: sanitizeSpeciesRelations(DEFAULT_SPECIES_RELATIONS),
+    biomeProgress: sanitizeBiomeProgress(DEFAULT_BIOME_PROGRESS),
   };
 }
 
@@ -267,6 +328,7 @@ function cloneDefaultSave() {
     alignment: { ...DEFAULT_SAVE.alignment },
     traitBlueprints: { ...DEFAULT_SAVE.traitBlueprints },
     speciesRelations: sanitizeSpeciesRelations(DEFAULT_SAVE.speciesRelations),
+    biomeProgress: sanitizeBiomeProgress(DEFAULT_SAVE.biomeProgress),
   };
 }
 
@@ -294,6 +356,18 @@ export function loadSave() {
     const evolutionDraft = sanitizeEvolutionDraft(parsed?.evolutionDraft, speciesCreatures, activeCreatureId);
     const traitBlueprints = sanitizeTraitBlueprints(parsed?.traitBlueprints, speciesCreatures, evolutionDraft);
     const speciesRelations = sanitizeSpeciesRelations(parsed?.speciesRelations);
+    const hasLegacyProgress =
+      !parsed?.biomeProgress
+      && (
+        (parsed?.dna ?? 0) > 0
+        || (parsed?.speciesXp ?? 0) > 0
+        || speciesCreatures.length > 1
+        || Object.values(activeCreature?.traits ?? {}).some((value) => value > 0)
+      );
+    const biomeProgress = sanitizeBiomeProgress(
+      parsed?.biomeProgress,
+      createDefaultBiomeProgress({ legacy: hasLegacyProgress }),
+    );
 
     return {
       dna: Number.isFinite(parsed?.dna) ? Math.max(0, Math.round(parsed.dna)) : DEFAULT_SAVE.dna,
@@ -307,6 +381,7 @@ export function loadSave() {
       alignment: sanitizeAlignment(parsed?.alignment),
       traitBlueprints,
       speciesRelations,
+      biomeProgress,
     };
   } catch {
     return cloneDefaultSave();
@@ -328,6 +403,7 @@ export function saveProgress(payload) {
   const evolutionDraft = sanitizeEvolutionDraft(payload.evolutionDraft, speciesCreatures, activeCreatureId);
   const traitBlueprints = sanitizeTraitBlueprints(payload.traitBlueprints, speciesCreatures, evolutionDraft);
   const speciesRelations = sanitizeSpeciesRelations(payload.speciesRelations);
+  const biomeProgress = sanitizeBiomeProgress(payload.biomeProgress);
   const snapshot = {
     dna: Math.max(0, Math.round(payload.dna ?? 0)),
     speciesXp: Math.max(0, Math.round(payload.speciesXp ?? 0)),
@@ -340,6 +416,7 @@ export function saveProgress(payload) {
     alignment: sanitizeAlignment(payload.alignment),
     traitBlueprints,
     speciesRelations,
+    biomeProgress,
   };
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));

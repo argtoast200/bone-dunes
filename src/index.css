@@ -351,6 +351,8 @@ button {
   font-size: 0.74rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  max-width: 132px;
+  text-align: center;
 }
 
 .mini-map-zone.danger {
@@ -745,6 +747,32 @@ button {
   font-size: 1.02rem;
 }
 
+.frontier-summary-card {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(143, 239, 216, 0.18);
+  background: linear-gradient(135deg, rgba(131, 230, 217, 0.08), rgba(255, 232, 177, 0.04));
+}
+
+.frontier-summary-card strong {
+  display: block;
+  margin: 6px 0 4px;
+  color: #fff4df;
+  font-size: 1.02rem;
+}
+
+.frontier-pill {
+  background: rgba(139, 239, 216, 0.12);
+  border-color: rgba(143, 239, 216, 0.18);
+}
+
+.frontier-next-unlock {
+  color: rgba(248, 234, 209, 0.74);
+}
+
 .editor-group-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -846,7 +874,7 @@ button {
 
 .species-summary-bar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
   margin-top: 20px;
 }

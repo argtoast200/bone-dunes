@@ -2,6 +2,104 @@ export const WORLD_RADIUS = 58;
 
 export const NEST_POSITION = { x: -26, z: 22, radius: 10 };
 export const DANGER_ZONE = { x: 24, z: -18, radius: 18 };
+export const ORIGIN_POOL = {
+  x: -34,
+  z: 22,
+  radius: 13,
+  surfaceY: -1.1,
+  spawnX: -39,
+  spawnZ: 25,
+};
+export const SHALLOWS_ZONE = { x: -16, z: 18, radius: 19 };
+export const MARSH_ZONE = { x: -8, z: 30, radius: 15 };
+
+export const BIOME_DEFS = {
+  originWaters: {
+    key: "originWaters",
+    label: "Origin Waters",
+    shortLabel: "Origin",
+    summary: "Universal cradle water. Newborn bodies grow fastest here.",
+    pressure: "Safe nursery",
+    uiColor: 0x7fe8dc,
+    speed: 0.96,
+    traction: 0.94,
+    dust: 0.18,
+    dnaMultiplier: 0.9,
+    masteryRate: 0.95,
+    newbornMasteryRate: 2.4,
+    water: true,
+    order: 0,
+    unlockHint: "All species begin here.",
+  },
+  sunlitShallows: {
+    key: "sunlitShallows",
+    label: "Sunlit Shallows",
+    shortLabel: "Shallows",
+    summary: "Food-rich shallows where early lines learn to glide beyond the nursery.",
+    pressure: "Starter frontier",
+    uiColor: 0xa2efd4,
+    speed: 1.02,
+    traction: 0.96,
+    dust: 0.34,
+    dnaMultiplier: 1,
+    masteryRate: 1.05,
+    newbornMasteryRate: 1.8,
+    water: true,
+    order: 1,
+    unlockHint: "Starter frontier",
+  },
+  glowMarsh: {
+    key: "glowMarsh",
+    label: "Glow Marsh",
+    shortLabel: "Marsh",
+    summary: "Sticky glow-mud, calmer prey lines, and softer ground that rewards patience.",
+    pressure: "Adaptive frontier",
+    uiColor: 0x88ffd6,
+    speed: 0.9,
+    traction: 0.82,
+    dust: 0.26,
+    dnaMultiplier: 1.1,
+    masteryRate: 1.08,
+    newbornMasteryRate: 1.3,
+    water: false,
+    order: 2,
+    unlockHint: "Reach 6 XP or befriend Burrowing Herbivores",
+  },
+  boneDunes: {
+    key: "boneDunes",
+    label: "Bone Dunes",
+    shortLabel: "Dunes",
+    summary: "Open sand and long sightlines. Fast hunting, exposed migrations, and territorial fights.",
+    pressure: "Expansion frontier",
+    uiColor: 0xf0c28c,
+    speed: 1.05,
+    traction: 0.94,
+    dust: 1,
+    dnaMultiplier: 1.05,
+    masteryRate: 1.1,
+    newbornMasteryRate: 0.9,
+    water: false,
+    order: 3,
+    unlockHint: "Raise a body past adolescent or reach 8 XP",
+  },
+  jawBasin: {
+    key: "jawBasin",
+    label: "Jaw Basin",
+    shortLabel: "Basin",
+    summary: "Predator basin where heavy DNA rewards come with relentless territorial pressure.",
+    pressure: "War frontier",
+    uiColor: 0xff8b66,
+    speed: 0.97,
+    traction: 0.86,
+    dust: 0.82,
+    dnaMultiplier: 1.15,
+    masteryRate: 1.18,
+    newbornMasteryRate: 0.55,
+    water: false,
+    order: 4,
+    unlockHint: "Reach 18 XP or draw Bone Stalkers into open war",
+  },
+};
 
 export const PLAYER_BASE_STATS = {
   speed: 11.5,
@@ -73,6 +171,10 @@ export const UPGRADE_DEFS = [
 ];
 
 export const FOOD_SPAWNS = [
+  { x: -38, z: 24, dna: 2, rare: false },
+  { x: -35, z: 17, dna: 2, rare: false },
+  { x: -31, z: 27, dna: 2, rare: false },
+  { x: -28, z: 17, dna: 3, rare: false },
   { x: -20, z: 9, dna: 3, rare: false },
   { x: -12, z: 14, dna: 3, rare: false },
   { x: -4, z: 5, dna: 3, rare: false },
@@ -217,7 +319,7 @@ export const SPECIES_DEFS = {
     packSize: [2, 3],
     uiColor: 0xf2d7a2,
     territory: {
-      label: "Rib Shelf",
+      label: "Tidebone Shelf",
       x: 4,
       z: 8,
       radius: 17,
@@ -286,7 +388,7 @@ export const SPECIES_DEFS = {
     packSize: [3, 4],
     uiColor: 0x96ffe3,
     territory: {
-      label: "Glow Flats",
+      label: "Glow Marsh",
       x: -8,
       z: 29,
       radius: 16,

@@ -385,3 +385,65 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no full conversation tree, tribe phase, multiple biomes, or freeform Spore editor
   - no giant faction/quest system; the pass stayed focused on one simple social layer that materially changes evolution progression
+
+## 2026-03-07 Water-Origin Biome Frontier Pass
+
+- Current request: design the next biome leap so all life starts in water, then branch the existing playable evolution game into distinct frontier biomes without rewriting the architecture.
+- Near-term implementation choice:
+  - kept the current single-world structure, but turned it into a staged frontier map instead of trying to ship a many-stage campaign in one pass
+  - focused on one practical slice:
+    - aquatic origin start
+    - visible shoreline / marsh / dunes / basin branch structure
+    - lightweight biome progression and frontier unlocking
+    - biome-aware movement / reward tuning
+- Implemented:
+  - extended `src/game/config.js` with a first biome framework:
+    - `Origin Waters`
+    - `Sunlit Shallows`
+    - `Glow Marsh`
+    - `Bone Dunes`
+    - `Jaw Basin`
+  - extended `src/game/save.js` with biome progression persistence:
+    - unlocked frontiers
+    - discovered frontiers
+    - per-biome mastery
+    - dominant biome
+    - migration path for legacy saves so existing species lines keep their progress instead of being hard-reset into the aquatic start
+  - rebuilt `src/game/world.js` around the new route:
+    - carved an origin lagoon near the nest side of the map
+    - added shallows shaping, a marsh depression, and stronger terrain tinting by biome
+    - added water surfaces, coral clusters, reed patches, and extra biome particles so the world reads as a branching frontier instead of a single dune bowl
+  - updated `src/game/SporeSliceGame.js` so the biome system materially affects play:
+    - fresh species lines and hatchlings now spawn in the origin waters as baby creatures instead of spawning adult at the nest
+    - newly laid eggs now hatch back into the origin waters
+    - biome state now tracks current biome, frontier unlocks, mastery, dominant biome, and next unlock target
+    - movement now responds to biome context:
+      - newborns move better in water
+      - adults are less efficient there
+      - marsh traction/speed are softer
+      - biome reward multipliers now shape DNA gain
+    - objective text now changes by biome/frontier state instead of always treating the map as generic dunes
+  - updated `src/game/GameApp.jsx` and `src/index.css` so the new progression is readable without clutter:
+    - HUD now shows current biome, dominant biome, and next frontier in the compact focus strip
+    - minimap card now reflects the active biome
+    - menu copy now teaches the water-first route
+    - nest editor now includes a `Frontiers` card so evolution and biome progression feel connected
+- Validation:
+  - `npm run build` passes after the biome pass
+  - visual artifact copied into the repo:
+    - `output/web-game/biome-frontier-pass/biome-ui-live.png`
+  - visual inspection:
+    - confirmed the aquatic lagoon, coral/reed dressing, and cooler fog/background make the starting area read clearly as water-origin
+    - confirmed the HUD stays compact while surfacing current biome, dominant biome, and next frontier
+  - deterministic browser checks via Playwright browser tools:
+    - after `resetProgress()` + `startGame()`, the player starts at about `(-39, 25)` as `Baby Boney Snapper` in `Origin Waters`, with `atNest: false`
+    - left-click move from the aquatic start traveled about `6.8` world units and kept the creature inside `Origin Waters`
+    - sprint/steer burst after that moved about `1.88` world units and reduced sprint charge to about `74%`
+    - setting species XP to `8` and advancing biome progression unlocked `Bone Dunes`, shifting the next frontier target to `Jaw Basin`
+    - teleport-and-bite regression check still landed cleanly on a scavenger (`44 -> 22`, `attackResult: "hit"`)
+    - Playwright browser console reported `0` actual errors
+  - note:
+    - the standalone `$WEB_GAME_CLIENT` script was invoked twice during this pass, but it did not return cleanly in this environment, so final validation was completed with the interactive Playwright browser tools instead
+- Scope protected:
+  - no multi-map campaign, no flying/underground stage split, no broad species rewrite
+  - no hard biome lock walls yet; this pass makes biome expansion legible and consequential before adding heavier gate systems

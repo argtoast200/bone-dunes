@@ -30,6 +30,18 @@ const initialState = {
   dangerBoost: 1,
   threatDistance: null,
   zoneTransition: 0,
+  biomeKey: "sunlitShallows",
+  biomeName: "Sunlit Shallows",
+  biomeSummary: "Food-rich shallows where early lines first push out of the nursery waters.",
+  biomePressure: "Starter frontier",
+  biomeUnlocked: true,
+  dominantBiomeName: "Origin Waters",
+  dominantBiomeSummary: "Universal cradle water. Newborn bodies grow fastest here.",
+  unlockedBiomes: [
+    { key: "originWaters", label: "Origin Waters", shortLabel: "Origin" },
+    { key: "sunlitShallows", label: "Sunlit Shallows", shortLabel: "Shallows" },
+  ],
+  nextBiomeUnlock: null,
   ecosystemNotice: "The dunes are still settling.",
   territoryName: null,
   territoryOwner: null,
@@ -98,7 +110,7 @@ const initialState = {
   lastEvolution: null,
   hasSave: false,
   canUpgrade: false,
-  controlsHint: "Left click move, WASD/Arrows steer, Space/right click bite, then return to the nest to evolve",
+  controlsHint: "Left click move, WASD/Arrows steer, Space/right click bite, then return to the nest to evolve the next water-born body",
 };
 
 const UPGRADE_GROUPS = [
@@ -184,7 +196,7 @@ function HudMeter({ label, value, fill, tone = "health", detail = null }) {
   );
 }
 
-function MiniMap({ hudMap, zone }) {
+function MiniMap({ hudMap, zone, biomeName }) {
   const center = 70;
   const radius = 48;
   const safeHudMap = hudMap ?? initialState.hudMap;
@@ -199,13 +211,14 @@ function MiniMap({ hudMap, zone }) {
   const nestX = center + localX * scale;
   const nestY = center + localY * scale;
   const bearing = getBearingLabel(nest.bearing ?? 0);
+  const biomeBadge = biomeName?.split(" ").slice(0, 2).join(" ") ?? "Dunes";
 
   return (
     <section className="mini-map-card">
       <div className="mini-map-copy">
         <p className="eyebrow">Nest Route</p>
         <strong>{nest.atNest ? "At species nest" : `Nest ${Math.round(nest.distance)}m ${bearing}`}</strong>
-        <small>{zone === "danger" ? "Danger pressure rises away from home." : "Use the nest beacon to bank DNA safely."}</small>
+        <small>{zone === "danger" ? "Danger pressure rises away from home." : biomeName}</small>
       </div>
 
       <div className="mini-map-frame">
@@ -224,7 +237,7 @@ function MiniMap({ hudMap, zone }) {
             <path d="M0,-17 L9,11 L0,5 L-9,11 Z" className="mini-map-player" />
           </g>
         </svg>
-        <span className={`mini-map-zone ${zone}`}>{zone === "danger" ? "Threat" : zone === "nest" ? "Nest" : "Dunes"}</span>
+        <span className={`mini-map-zone ${zone}`}>{zone === "danger" ? "Threat" : zone === "nest" ? "Nest" : biomeBadge}</span>
       </div>
     </section>
   );
@@ -312,6 +325,10 @@ export function GameApp() {
     contextPrompt = `Near ${socialHint.speciesName}. Hit ${socialHint.expectedHotkey} to ${socialHint.expectedVerb.toLowerCase()} and finish the pattern to befriend them.`;
   } else if (socialHint && socialHint.status === "friendly" && !uiState.canOpenEditor) {
     contextPrompt = `${socialHint.speciesName} recognize your line. Use the opening to gather DNA or pass through their territory.`;
+  } else if (!uiState.biomeUnlocked && uiState.zone !== "nest") {
+    contextPrompt = `${uiState.biomeName} is still a hard frontier. Return stronger before trying to claim it for the species.`;
+  } else if (uiState.biomeKey === "originWaters" && activeCreature && activeCreature.maturityPct < 100) {
+    contextPrompt = "Origin waters accelerate newborn growth. Feed here before pushing into the harder frontiers.";
   } else if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
     contextPrompt = "Egg draft ready. Open Creature Evolution, then lay the egg from Species.";
   } else if (uiState.canOpenEditor) {
@@ -360,7 +377,7 @@ export function GameApp() {
                   </div>
                 </section>
 
-                <MiniMap hudMap={uiState.hudMap} zone={uiState.zone} />
+                <MiniMap hudMap={uiState.hudMap} zone={uiState.zone} biomeName={uiState.biomeName} />
               </div>
 
               <div className="vitals-stack">
@@ -400,6 +417,21 @@ export function GameApp() {
                     {liveControls}
                   </small>
                   <div className="context-chip-row">
+                    <span className={`context-chip ${uiState.biomeUnlocked ? "friendly" : "hostile"}`}>
+                      {uiState.biomeName}
+                    </span>
+                    <span className="context-chip">
+                      Dominant
+                      {" "}
+                      {uiState.dominantBiomeName}
+                    </span>
+                    {uiState.nextBiomeUnlock && (
+                      <span className="context-chip">
+                        Next
+                        {" "}
+                        {uiState.nextBiomeUnlock.label}
+                      </span>
+                    )}
                     <span className="context-chip">
                       Blueprints
                       {" "}
@@ -477,7 +509,7 @@ export function GameApp() {
                     <p className="eyebrow">Creature Slice</p>
                     <h2>Bone Dunes</h2>
                     <p>
-                      Build a species line by bringing DNA home, laying a new egg, then raising that newborn into a stronger creature.
+                      Every species begins in the water. Feed in the origin pool, branch into new frontiers, then bring DNA home to shape the next body.
                     </p>
                   </div>
                   <div className="menu-pill-row">
@@ -490,7 +522,7 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div className="menu-panel">
                     <h3>Core Loop</h3>
-                    <p>Hunt for DNA. Befriend or defeat species to unlock blueprints. Return to the nest. Spend DNA in Creature Evolution. Lay the egg. Raise the newborn.</p>
+                    <p>Feed in the origin waters. Push into shallows, marsh, dunes, and basin frontiers. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>
@@ -523,8 +555,8 @@ export function GameApp() {
                     <h2>{uiState.editorTab === "evolution" ? "Creature Evolution" : "Species"}</h2>
                     <p>
                       {uiState.editorTab === "evolution"
-                        ? "Draft the next egg here. Spend DNA on blueprints unlocked in the dunes. Every upgrade changes the body and lengthens the growth journey."
-                        : "Lay drafted eggs, fast evolve hatchlings with XP, or switch between living bodies in the line."}
+                        ? "Draft the next egg here. Spend DNA on blueprints unlocked across the frontier biomes. Every upgrade changes the body and lengthens the growth journey."
+                        : "Lay drafted eggs, fast evolve hatchlings with XP, or switch between living bodies in the line as the species spreads into new biomes."}
                     </p>
                   </div>
 
@@ -617,6 +649,30 @@ export function GameApp() {
                       </div>
                     </div>
 
+                    <div className="frontier-summary-card">
+                      <div>
+                        <span className="upgrade-slot">Frontiers</span>
+                        <strong>{uiState.dominantBiomeName}</strong>
+                        <small>{uiState.dominantBiomeSummary}</small>
+                      </div>
+                      <div className="species-relation-row frontier-pill-row">
+                        {uiState.unlockedBiomes.map((biome) => (
+                          <span key={biome.key} className="species-relation-pill frontier-pill">
+                            {biome.label}
+                          </span>
+                        ))}
+                      </div>
+                      {uiState.nextBiomeUnlock && (
+                        <small className="frontier-next-unlock">
+                          Next frontier:
+                          {" "}
+                          {uiState.nextBiomeUnlock.label}
+                          {" • "}
+                          {uiState.nextBiomeUnlock.hint}
+                        </small>
+                      )}
+                    </div>
+
                     {uiState.lastEvolution && (
                       <div className="evolution-flash">
                         <strong>{uiState.lastEvolution.label}</strong>
@@ -707,6 +763,11 @@ export function GameApp() {
                           /6 alive
                         </strong>
                         <small>{uiState.rosterFull ? "Roster full" : "Switch bodies freely at the nest."}</small>
+                      </div>
+                      <div className="species-summary-card">
+                        <span className="upgrade-slot">Dominant Biome</span>
+                        <strong>{uiState.dominantBiomeName}</strong>
+                        <small>{uiState.nextBiomeUnlock ? `Next: ${uiState.nextBiomeUnlock.label}` : "All current frontiers claimed"}</small>
                       </div>
                     </div>
 

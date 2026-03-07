@@ -1,11 +1,13 @@
 import * as THREE from "three";
 
 import {
+  BIOME_DEFS,
   DANGER_ZONE,
   ENEMY_DEFS,
   FOOD_SPAWNS,
   MIGRATION_EVENT_DEFS,
   NEST_POSITION,
+  ORIGIN_POOL,
   PLAYER_BASE_STATS,
   SPECIES_DEFS,
   UPGRADE_DEFS,
@@ -13,6 +15,7 @@ import {
 } from "./config";
 import {
   DEFAULT_ALIGNMENT,
+  createDefaultBiomeProgress,
   DEFAULT_SAVE,
   clearSave,
   createEvolutionDraft,
@@ -22,7 +25,7 @@ import {
   MAX_SPECIES_CREATURES,
   saveProgress,
 } from "./save";
-import { buildWorld, getTerrainHeight } from "./world";
+import { buildWorld, getBiomeDefAtPosition, getBiomeKeyAtPosition, getTerrainHeight } from "./world";
 
 const FIXED_STEP = 1 / 60;
 const PLAYER_HEIGHT = 2.2;
@@ -83,6 +86,7 @@ const SOCIAL_INTERACT_RANGE = 8.4;
 const SOCIAL_CHAIN_WINDOW = 5.5;
 const SOCIAL_COOLDOWN = 0.85;
 const SOCIAL_EMOTE_DURATION = 0.7;
+const BIOME_MASTERY_MAX = 100;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -125,6 +129,9 @@ const TRAIT_TITLES = {
   glow: "Glowstripe",
 };
 const PATTERN_LABELS = ["Bloomstripe", "Scatterback", "Ribscribe"];
+const BIOME_ORDER = Object.values(BIOME_DEFS)
+  .sort((left, right) => left.order - right.order)
+  .map((biome) => biome.key);
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -601,6 +608,19 @@ function shiftAlignment(alignment, key, amount) {
   };
   next[key] = Math.max(0.01, next[key] + amount);
   return normalizeAlignment(next);
+}
+
+function getDominantBiomeKey(mastery, fallback = "originWaters") {
+  let winner = fallback;
+  let bestScore = mastery?.[fallback] ?? 0;
+  BIOME_ORDER.forEach((biomeKey) => {
+    const score = mastery?.[biomeKey] ?? 0;
+    if (score > bestScore + 0.001) {
+      bestScore = score;
+      winner = biomeKey;
+    }
+  });
+  return winner;
 }
 
 function getBlueprintLabel(traitKey) {
@@ -1080,6 +1100,28 @@ export class SporeSliceGame {
       ...DEFAULT_SAVE.traitBlueprints,
       ...(this.saveData.traitBlueprints ?? {}),
     };
+    this.saveData.biomeProgress = {
+      ...createDefaultBiomeProgress({
+        legacy:
+          this.saveData.dna > 0
+          || (this.saveData.speciesXp ?? 0) > 0
+          || this.saveData.speciesCreatures.length > 1,
+      }),
+      ...(this.saveData.biomeProgress ?? {}),
+      mastery: {
+        ...createDefaultBiomeProgress({
+          legacy:
+            this.saveData.dna > 0
+            || (this.saveData.speciesXp ?? 0) > 0
+            || this.saveData.speciesCreatures.length > 1,
+        }).mastery,
+        ...(this.saveData.biomeProgress?.mastery ?? {}),
+      },
+    };
+    this.saveData.biomeProgress.dominantBiome = getDominantBiomeKey(
+      this.saveData.biomeProgress.mastery,
+      this.saveData.biomeProgress.dominantBiome,
+    );
     this.saveData.speciesRelations = Object.keys(DEFAULT_SAVE.speciesRelations).reduce((relations, speciesId) => {
       relations[speciesId] = {
         ...DEFAULT_SAVE.speciesRelations[speciesId],
@@ -1109,8 +1151,8 @@ export class SporeSliceGame {
     this.state = {
       mode: "menu",
       zone: "nest",
-      message: "Wake at the nest, gather DNA, then return to lay the next egg.",
-      objective: "Evolve at the nest, hatch a stronger body, and grow it in the dunes.",
+      message: "Life begins in the origin waters. Feed there, push outward, then return to the species nest to evolve.",
+      objective: "Start in water, unlock new frontiers, then grow the line into the dunes and beyond.",
       dna: this.saveData.dna,
       speciesXp: this.saveData.speciesXp ?? 0,
       bestRun: this.saveData.bestRun ?? 0,
@@ -1128,6 +1170,7 @@ export class SporeSliceGame {
       ecosystemNotice: "The dunes are still settling.",
       startedAt: 0,
       respawnTimer: 0,
+      biome: getBiomeKeyAtPosition(NEST_POSITION),
     };
 
     this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
@@ -1876,10 +1919,11 @@ export class SporeSliceGame {
     this.state.lastEvolution = {
       key: "egg",
       label: "New Egg Laid",
-      summary: `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches as a newborn and must grow into its full mass.`,
+      summary: `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches into the origin waters and must grow into its full mass.`,
     };
-    this.state.message = `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches. Hunt in this body to speed maturation.`;
+    this.state.message = `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches into the origin waters. Feed there to speed maturation.`;
     this.resetEvolutionDraft(hatchling);
+    this.resetPlayerToNest(true);
     this.persistProgress();
     this.emitState();
     return true;
@@ -1943,8 +1987,41 @@ export class SporeSliceGame {
       matureActive: activeCreature.growth < 1,
       source: "time",
     });
+    this.updateBiomeProgress(dt);
 
     if (Math.floor(this.state.speciesXp) !== speciesXpBefore || Math.floor(growthBefore * 20) !== Math.floor(activeCreature.growth * 20)) {
+      this.persistProgress();
+    }
+  }
+
+  updateBiomeProgress(dt) {
+    const biome = this.getCurrentBiome(this.player.group.position);
+    const activeCreature = this.getActiveCreature();
+    const dominantBefore = this.saveData.biomeProgress.dominantBiome;
+    const alreadyDiscovered = this.saveData.biomeProgress.discoveredBiomes.includes(biome.key);
+    const discovered = this.discoverBiome(biome.key, {
+      announce: this.state.mode === "playing" && !alreadyDiscovered,
+    });
+    const masteryChanged = this.addBiomeMastery(
+      biome.key,
+      dt * ((activeCreature?.growth ?? 1) < 1 ? biome.newbornMasteryRate : biome.masteryRate),
+    );
+
+    let unlocked = false;
+    BIOME_ORDER.forEach((biomeKey) => {
+      if (!this.isBiomeUnlocked(biomeKey) && this.canUnlockBiome(biomeKey)) {
+        unlocked = this.unlockBiome(biomeKey, { announce: this.state.mode === "playing" }) || unlocked;
+      }
+    });
+
+    const dominantAfter = this.saveData.biomeProgress.dominantBiome;
+    if (dominantAfter !== dominantBefore && this.state.mode === "playing") {
+      const dominantBiome = BIOME_DEFS[dominantAfter];
+      this.setEcosystemNotice(`${dominantBiome.label} is now shaping the species line.`, 3.8);
+    }
+
+    if ((discovered || masteryChanged || unlocked) && this.state.mode === "playing") {
+      this.state.hasSave = true;
       this.persistProgress();
     }
   }
@@ -2071,6 +2148,126 @@ export class SporeSliceGame {
     });
 
     return bestTerritory;
+  }
+
+  getCurrentBiome(position = this.player?.group?.position ?? NEST_POSITION) {
+    return getBiomeDefAtPosition(position);
+  }
+
+  isBiomeUnlocked(biomeKey) {
+    return this.saveData.biomeProgress?.unlockedBiomes?.includes(biomeKey);
+  }
+
+  discoverBiome(biomeKey, { announce = false } = {}) {
+    if (!biomeKey || this.saveData.biomeProgress.discoveredBiomes.includes(biomeKey)) {
+      return false;
+    }
+
+    this.saveData.biomeProgress.discoveredBiomes.push(biomeKey);
+    this.saveData.biomeProgress.discoveredBiomes.sort((left, right) => BIOME_DEFS[left].order - BIOME_DEFS[right].order);
+    if (announce) {
+      const biome = BIOME_DEFS[biomeKey];
+      this.state.message = `${biome.label} discovered. ${biome.summary}`;
+      this.setEcosystemNotice(`${biome.label} becomes part of your species route.`, 3.6);
+    }
+    return true;
+  }
+
+  canUnlockBiome(biomeKey) {
+    if (!biomeKey || this.isBiomeUnlocked(biomeKey)) {
+      return true;
+    }
+
+    const activeCreature = this.getActiveCreature();
+    const originMastery = this.saveData.biomeProgress.mastery.originWaters ?? 0;
+    const dunesMastery = this.saveData.biomeProgress.mastery.boneDunes ?? 0;
+    switch (biomeKey) {
+      case "originWaters":
+      case "sunlitShallows":
+        return true;
+      case "glowMarsh":
+        return (this.state.speciesXp ?? 0) >= 6
+          || originMastery >= 18
+          || (this.getSpeciesRelation("burrowingHerbivore")?.status === "friendly");
+      case "boneDunes":
+        return (this.state.speciesXp ?? 0) >= 8
+          || (activeCreature?.growth ?? 0) >= 0.55
+          || getTraitTotal(activeCreature?.traits ?? this.state.upgrades) > 0;
+      case "jawBasin":
+        return (this.state.speciesXp ?? 0) >= 18
+          || dunesMastery >= 16
+          || (this.getSpeciesRelation("boneStalker")?.status === "hostile")
+          || Boolean(this.getSpeciesRelation("boneStalker")?.alphaUnlocked);
+      default:
+        return false;
+    }
+  }
+
+  unlockBiome(biomeKey, { announce = true } = {}) {
+    if (!biomeKey || this.isBiomeUnlocked(biomeKey)) {
+      return false;
+    }
+
+    this.discoverBiome(biomeKey, { announce: false });
+    this.saveData.biomeProgress.unlockedBiomes.push(biomeKey);
+    this.saveData.biomeProgress.unlockedBiomes.sort((left, right) => BIOME_DEFS[left].order - BIOME_DEFS[right].order);
+    if (announce) {
+      const biome = BIOME_DEFS[biomeKey];
+      this.state.message = `${biome.label} opens to the species. ${biome.summary}`;
+      this.setEcosystemNotice(`${biome.label} frontier unlocked. ${biome.pressure}.`, 4.2);
+    }
+    return true;
+  }
+
+  addBiomeMastery(biomeKey, amount) {
+    if (!biomeKey || !Number.isFinite(amount) || amount <= 0) {
+      return false;
+    }
+
+    const mastery = this.saveData.biomeProgress.mastery;
+    const before = mastery[biomeKey] ?? 0;
+    const after = clamp(before + amount, 0, BIOME_MASTERY_MAX);
+    if (Math.abs(after - before) <= 0.0001) {
+      return false;
+    }
+
+    mastery[biomeKey] = after;
+    const dominantBefore = this.saveData.biomeProgress.dominantBiome;
+    this.saveData.biomeProgress.dominantBiome = getDominantBiomeKey(mastery, dominantBefore);
+    return Math.floor(before) !== Math.floor(after) || dominantBefore !== this.saveData.biomeProgress.dominantBiome;
+  }
+
+  getNextBiomeUnlock() {
+    const nextKey = BIOME_ORDER.find((biomeKey) => !this.isBiomeUnlocked(biomeKey));
+    if (!nextKey) {
+      return null;
+    }
+
+    const biome = BIOME_DEFS[nextKey];
+    return {
+      key: biome.key,
+      label: biome.label,
+      hint: biome.unlockHint,
+    };
+  }
+
+  getPreferredSpawnPoint(creature = this.getActiveCreature()) {
+    const hatchling = (creature?.growth ?? 1) < 1;
+    if (hatchling) {
+      return {
+        x: ORIGIN_POOL.spawnX,
+        z: ORIGIN_POOL.spawnZ,
+        yaw: Math.PI * 0.58,
+        biomeKey: "originWaters",
+      };
+    }
+
+    return {
+      x: NEST_POSITION.x,
+      z: NEST_POSITION.z,
+      yaw: Math.PI,
+      biomeKey: "sunlitShallows",
+    };
   }
 
   getClosestFoodTarget(creature, maxDistance = 18) {
@@ -2582,9 +2779,9 @@ export class SporeSliceGame {
       this.state.mode = "playing";
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
-        ? "The nest remembers your line. Gather DNA, unlock new parts in the dunes, then hatch the next body at home."
-        : "Food glows across the dunes. Befriend or defeat species, then bring DNA back to the nest and lay the next egg.";
-      this.runStats.summary = "Fresh hunt. DNA builds the next body, and species encounters unlock the parts worth growing.";
+        ? "Your line still begins in water. Push through new frontier biomes, then bank the gains back at the nest."
+        : "A tiny organism wakes in the origin waters. Feed there first, then earn the first push onto shore.";
+      this.runStats.summary = "Fresh hunt. All life starts in the water, then branches outward through riskier frontiers.";
       this.state.startedAt = this.elapsed;
       this.state.editorOpen = false;
       this.renderer.domElement.focus();
@@ -2989,6 +3186,9 @@ export class SporeSliceGame {
         .reduce((closest, enemy) => Math.min(closest, getDistance2D(enemy.group.position, playerPosition)), Number.POSITIVE_INFINITY);
       const nestDistance = Math.hypot(NEST_POSITION.x - playerPosition.x, NEST_POSITION.z - playerPosition.z);
       const attackHudVisible = this.player.combatHudTimer > 0 || (Number.isFinite(closestThreat) && closestThreat < 11.5);
+      const currentBiome = this.getCurrentBiome(playerPosition);
+      const dominantBiome = BIOME_DEFS[this.saveData.biomeProgress.dominantBiome] ?? BIOME_DEFS.originWaters;
+      const nextBiomeUnlock = this.getNextBiomeUnlock();
       const nearbyFoods = sortByDistance(playerPosition, this.foods.filter((food) => food.active), (food, distance) => ({
         id: food.id,
         x: Number(food.group.position.x.toFixed(1)),
@@ -3031,6 +3231,16 @@ export class SporeSliceGame {
         coordinate_system: "x east/right, z south-to-north on the ground plane, y up",
         mode: this.state.mode,
         zone: this.state.zone,
+        biome: {
+          key: currentBiome.key,
+          label: currentBiome.label,
+          summary: currentBiome.summary,
+          pressure: currentBiome.pressure,
+          unlocked: this.isBiomeUnlocked(currentBiome.key),
+          dominant: dominantBiome.label,
+          unlockedBiomes: this.saveData.biomeProgress.unlockedBiomes.map((biomeKey) => BIOME_DEFS[biomeKey]?.label ?? biomeKey),
+          nextUnlock: nextBiomeUnlock,
+        },
         editorOpen: this.state.editorOpen,
         editorTab: this.state.editorTab,
         message: this.state.message,
@@ -3190,6 +3400,7 @@ export class SporeSliceGame {
       alignment: this.state.alignment,
       traitBlueprints: this.saveData.traitBlueprints,
       speciesRelations: this.saveData.speciesRelations,
+      biomeProgress: this.saveData.biomeProgress,
     });
   }
 
@@ -3232,7 +3443,8 @@ export class SporeSliceGame {
 
   awardDNA(amount, message, options = {}) {
     const source = options.source ?? "food";
-    const rewardMultiplier = this.state.zone === "danger" ? DANGER_REWARD_MULTIPLIER : 1;
+    const biome = this.getCurrentBiome(this.player.group.position);
+    const rewardMultiplier = (this.state.zone === "danger" ? DANGER_REWARD_MULTIPLIER : 1) * (biome.dnaMultiplier ?? 1);
     const reward = Math.max(1, Math.round(amount * rewardMultiplier));
     this.state.dna += reward;
     this.state.hasSave = true;
@@ -3253,9 +3465,19 @@ export class SporeSliceGame {
       source === "predator" || source === "scavenger" || source === "herbivore" ? "aggressive" : "adaptive",
       source === "predator" ? 0.03 : source === "scavenger" ? 0.02 : source === "herbivore" ? 0.014 : source === "rareFood" ? 0.018 : 0.012,
     );
+    this.discoverBiome(biome.key, { announce: false });
+    this.addBiomeMastery(
+      biome.key,
+      source === "predator" ? 5.6 : source === "scavenger" ? 3.8 : source === "herbivore" ? 3 : source === "rareFood" ? 3.3 : 1.8,
+    );
     this.updateRunScore();
-    this.state.message = reward > amount
-      ? `${message} Danger surge: +${reward - amount} bonus DNA. Feral surge x${surgeLevel}.`
+    const bonusLabel = reward > amount
+      ? this.state.zone === "danger"
+        ? "Danger surge"
+        : `${biome.label} bonus`
+      : null;
+    this.state.message = bonusLabel
+      ? `${message} ${bonusLabel}: +${reward - amount} bonus DNA. Feral surge x${surgeLevel}.`
       : `${message} Feral surge x${surgeLevel}.`;
     const activeCreature = this.getActiveCreature();
     this.runStats.summary = this.surge.timer > 0.2
@@ -3334,7 +3556,7 @@ export class SporeSliceGame {
     const starterCreature = createSpeciesCreature({
       traits: DEFAULT_SAVE.upgrades,
       profile: createRandomCreatureProfile(),
-      growth: 1,
+      growth: 0.22,
       generation: 1,
     });
     this.saveData = {
@@ -3351,6 +3573,7 @@ export class SporeSliceGame {
         relations[speciesId] = { ...DEFAULT_SAVE.speciesRelations[speciesId] };
         return relations;
       }, {}),
+      biomeProgress: createDefaultBiomeProgress(),
     };
     this.state.dna = 0;
     this.state.speciesXp = 0;
@@ -3360,7 +3583,7 @@ export class SporeSliceGame {
     this.state.editorOpen = false;
     this.state.editorTab = "evolution";
     this.state.lastEvolution = null;
-    this.state.message = "A fresh clutch stirs in the nest. Shape the first adult, then hatch the next body.";
+    this.state.message = "A fresh organism wakes in the origin waters. Feed there, then push out toward the first land frontier.";
     this.clearSocialEncounter();
     this.runStats = {
       sessionDna: 0,
@@ -3370,7 +3593,7 @@ export class SporeSliceGame {
       timeAlive: 0,
       score: 0,
       bestRun: 0,
-      summary: "Fresh species line. Gather DNA, draft an egg, then hatch it at the nest.",
+      summary: "Fresh species line. Feed in the origin waters, unlock a frontier, then return to the nest to evolve.",
     };
     this.clearFeralSurge();
     this.applyActiveCreatureState({ preserveHealthRatio: false });
@@ -3388,13 +3611,14 @@ export class SporeSliceGame {
 
   resetPlayerToNest(initial = false) {
     const resettingAfterDeath = !initial && this.player.health <= 0;
-    const spawnY = getTerrainHeight(NEST_POSITION.x, NEST_POSITION.z) + PLAYER_HEIGHT;
-    this.player.group.position.set(NEST_POSITION.x, spawnY, NEST_POSITION.z);
+    const spawnTarget = this.getPreferredSpawnPoint();
+    const spawnY = getTerrainHeight(spawnTarget.x, spawnTarget.z) + PLAYER_HEIGHT;
+    this.player.group.position.set(spawnTarget.x, spawnY, spawnTarget.z);
     this.player.velocity.set(0, 0, 0);
     this.player.moveVelocity.set(0, 0, 0);
     this.player.impulseVelocity.set(0, 0, 0);
     this.player.previousVelocity.set(0, 0, 0);
-    this.player.yaw = Math.PI;
+    this.player.yaw = spawnTarget.yaw;
     this.player.health = this.playerStats.health;
     this.player.maxHealth = this.playerStats.health;
     this.player.sprintCharge = 1;
@@ -3432,6 +3656,9 @@ export class SporeSliceGame {
     this.cameraFovKick = 0;
     this.cameraMomentum.set(0, 0, 0);
     this.clearMoveTarget();
+    this.state.zone = getZoneName(this.player.group.position);
+    this.currentBiome = BIOME_DEFS[spawnTarget.biomeKey] ?? this.getCurrentBiome(this.player.group.position);
+    this.state.biome = this.currentBiome.key;
 
     if (resettingAfterDeath) {
       this.runStats = {
@@ -4774,7 +5001,21 @@ export class SporeSliceGame {
       : this.player.velocity.lengthSq() > 0.001
         ? vectorF.copy(this.player.velocity).setY(0).normalize()
         : vectorF.set(0, 0, 0);
+    const terrainBiome = this.getCurrentBiome(this.player.group.position);
+    const activeCreature = this.getActiveCreature();
+    const frontierUnlocked = this.isBiomeUnlocked(terrainBiome.key);
     sampleTerrainResponse(this.player.group.position, terrainDirection, this.player.terrain);
+    this.player.terrain.biomeKey = terrainBiome.key;
+    this.player.terrain.water = terrainBiome.water;
+    const juvenileWaterBonus = terrainBiome.water && (activeCreature?.growth ?? 1) < 1 ? 1.14 : 1;
+    const adultWaterPenalty = terrainBiome.water && (activeCreature?.growth ?? 1) >= 1 ? 0.9 : 1;
+    this.player.terrain.speedFactor = clamp(
+      this.player.terrain.speedFactor * (terrainBiome.speed ?? 1) * juvenileWaterBonus * adultWaterPenalty * (frontierUnlocked ? 1 : 0.94),
+      0.58,
+      1.16,
+    );
+    this.player.terrain.traction = clamp(this.player.terrain.traction * (terrainBiome.traction ?? 1), 0.56, 1);
+    this.player.terrain.dust = clamp(this.player.terrain.dust * (terrainBiome.dust ?? 1), 0.14, 1);
     const desiredSpeed = moving
       ? this.playerStats.speed * sprintBonus * (1 + surgePower * FERAL_SURGE_SPEED_BONUS) * attackMoveFactor * this.player.terrain.speedFactor * targetSlowdown
       : 0;
@@ -4860,10 +5101,10 @@ export class SporeSliceGame {
       this.spawnGroundDust(
         vectorF.copy(this.player.group.position).addScaledVector(dustDirection, -0.46),
         {
-          color: this.state.zone === "danger" ? 0xca865f : 0xd8b287,
-          ttl: sprinting ? 0.22 : 0.16,
-          size: 0.62 + this.player.terrain.dust * 0.28 + (sprinting ? 0.18 : 0),
-          shards: sprinting ? 5 : 3,
+          color: this.player.terrain.water ? 0x8ef7e4 : this.state.zone === "danger" ? 0xca865f : 0xd8b287,
+          ttl: this.player.terrain.water ? 0.2 : sprinting ? 0.22 : 0.16,
+          size: 0.58 + this.player.terrain.dust * 0.28 + (sprinting ? 0.18 : 0),
+          shards: this.player.terrain.water ? 4 : sprinting ? 5 : 3,
         },
       );
       this.player.dustTimer = PLAYER_DUST_INTERVAL / Math.max(0.45, this.player.terrain.dust);
@@ -4957,17 +5198,29 @@ export class SporeSliceGame {
     );
 
     this.state.zone = getZoneName(this.player.group.position);
+    const currentBiome = this.getCurrentBiome(this.player.group.position);
+    const activeFrontier = this.isBiomeUnlocked(currentBiome.key);
+    this.currentBiome = currentBiome;
+    this.state.biome = currentBiome.key;
 
     if (this.state.zone === "nest" && this.state.editorOpen) {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 18);
-      this.state.objective = "Creature Evolution grows unlocked blueprints. Species Nest swaps bodies and fast evolves hatchlings.";
+      this.state.objective = "Creature Evolution shapes the next body. Species grows outward by hatching fresh life back into the origin waters.";
     } else if (this.state.zone === "nest") {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
-      this.state.objective = "Species nest: heal, spend DNA on unlocked parts, hatch the next body, then grow it in the dunes.";
+      this.state.objective = "Species nest: heal, spend DNA, lay an egg, then send the newborn back through the origin waters.";
     } else if (this.state.zone === "danger") {
-      this.state.objective = "Territory zone: richer DNA, tighter stamina, and species encounters that can unlock harder body plans.";
+      this.state.objective = "Jaw Basin: richer DNA and harder fights. Master it to turn the species into a war line.";
+    } else if (!activeFrontier) {
+      this.state.objective = `${currentBiome.label} is still a hard frontier. Grow the species or return to the nest before claiming it.`;
+    } else if (currentBiome.key === "originWaters") {
+      this.state.objective = "Origin Waters: feed safely, grow newborn mass quickly, then break for the shallows.";
+    } else if (currentBiome.key === "sunlitShallows") {
+      this.state.objective = "Sunlit Shallows: easy food and the first real step onto a wider biome route.";
+    } else if (currentBiome.key === "glowMarsh") {
+      this.state.objective = "Glow Marsh: slower footing, calmer prey, and a softer path toward adaptive body plans.";
     } else {
-      this.state.objective = "Bone dunes: gather DNA, befriend or dominate species, then bring the next body plan home.";
+      this.state.objective = "Bone Dunes: long hunts, exposed movement, and the main push toward land-dominant species.";
     }
   }
 
@@ -5089,6 +5342,14 @@ export class SporeSliceGame {
         layer.material.opacity = (index === 0 ? 0.18 : 0.1) + Math.sin(this.elapsed * (0.35 + index * 0.18)) * 0.02;
       });
     }
+    if (this.world.waterSurfaces) {
+      this.world.waterSurfaces.forEach((surface, index) => {
+        surface.mesh.position.y = surface.baseY + Math.sin(this.elapsed * (0.75 + index * 0.18) + surface.phase) * surface.drift;
+        const swell = 1 + Math.sin(this.elapsed * (0.55 + index * 0.12) + surface.phase) * surface.scale;
+        surface.mesh.scale.setScalar(swell);
+        surface.mesh.material.opacity = (index === 0 ? 0.3 : 0.16) + Math.sin(this.elapsed * (0.65 + index * 0.16) + surface.phase) * 0.015;
+      });
+    }
     if (this.world.skyFlocks) {
       this.world.skyFlocks.forEach((flock, flockIndex) => {
         flock.birds.forEach((bird, birdIndex) => {
@@ -5109,16 +5370,20 @@ export class SporeSliceGame {
       });
     }
 
+    const biome = this.currentBiome ?? BIOME_DEFS[this.state.biome] ?? BIOME_DEFS.boneDunes;
     if (this.nestLight && this.dangerLight) {
       this.nestLight.intensity = 4.4 + Math.sin(this.elapsed * 1.9) * 0.45 + (this.state.zone === "nest" ? 0.5 : 0);
       this.dangerLight.intensity = 5.1 + Math.sin(this.elapsed * 1.5 + 0.9) * 0.55 + (this.state.zone === "danger" ? 0.8 : 0);
     }
     if (this.hemiLight) {
-      this.hemiLight.intensity = this.state.zone === "danger" ? 1.45 : 1.68;
+      this.hemiLight.intensity = this.state.zone === "danger" ? 1.45 : biome.water ? 1.78 : biome.key === "glowMarsh" ? 1.6 : 1.68;
     }
     if (this.scene.fog) {
-      this.scene.fog.density = this.state.zone === "danger" ? 0.026 : 0.022;
-      this.scene.fog.color.set(this.state.zone === "danger" ? 0xc7855d : 0xd89d69);
+      this.scene.fog.density = this.state.zone === "danger" ? 0.026 : biome.water ? 0.0195 : biome.key === "glowMarsh" ? 0.024 : 0.022;
+      this.scene.fog.color.set(this.state.zone === "danger" ? 0xc7855d : biome.water ? 0xa5cdbd : biome.key === "glowMarsh" ? 0xb49d72 : 0xd89d69);
+    }
+    if (this.scene.background) {
+      this.scene.background.set(this.state.zone === "danger" ? 0xe0a071 : biome.water ? 0xcfe0c3 : biome.key === "glowMarsh" ? 0xd7b67d : 0xe3ae73);
     }
     if (this.world.nestRing) {
       this.world.nestRing.material.opacity = 0.16 + Math.sin(this.elapsed * 2.2) * 0.04 + (this.state.zone === "nest" ? 0.07 : 0);
@@ -5331,6 +5596,12 @@ export class SporeSliceGame {
     const nestDz = NEST_POSITION.z - playerPosition.z;
     const nestDistance = Math.hypot(nestDx, nestDz);
     const attackHudVisible = this.player.combatHudTimer > 0 || (this.state.zone !== "nest" && Number.isFinite(closestThreat) && closestThreat < 8.5);
+    const currentBiome = this.currentBiome ?? this.getCurrentBiome(this.player.group.position);
+    const dominantBiome = BIOME_DEFS[this.saveData.biomeProgress.dominantBiome] ?? BIOME_DEFS.originWaters;
+    const nextBiomeUnlock = this.getNextBiomeUnlock();
+    const unlockedBiomeEntries = this.saveData.biomeProgress.unlockedBiomes
+      .map((biomeKey) => BIOME_DEFS[biomeKey])
+      .filter(Boolean);
     const currentTerritory = this.currentTerritory ?? this.getCurrentTerritoryForPosition(this.player.group.position);
     const territorySpecies = currentTerritory ? SPECIES_DEFS[currentTerritory.speciesId] : null;
     const unlockedBlueprints = UPGRADE_DEFS.reduce((count, upgrade) => count + (this.isTraitBlueprintUnlocked(upgrade.key) ? 1 : 0), 0);
@@ -5453,6 +5724,19 @@ export class SporeSliceGame {
       dangerBoost: this.state.zone === "danger" ? DANGER_REWARD_MULTIPLIER : 1,
       threatDistance: Number.isFinite(closestThreat) ? closestThreat : null,
       zoneTransition: this.zoneTransition,
+      biomeKey: currentBiome.key,
+      biomeName: currentBiome.label,
+      biomeSummary: currentBiome.summary,
+      biomePressure: currentBiome.pressure,
+      biomeUnlocked: this.isBiomeUnlocked(currentBiome.key),
+      dominantBiomeName: dominantBiome.label,
+      dominantBiomeSummary: dominantBiome.summary,
+      unlockedBiomes: unlockedBiomeEntries.map((biome) => ({
+        key: biome.key,
+        label: biome.label,
+        shortLabel: biome.shortLabel,
+      })),
+      nextBiomeUnlock,
       ecosystemNotice: this.state.ecosystemNotice,
       territoryName: currentTerritory?.label ?? null,
       territoryOwner: territorySpecies?.name ?? null,
@@ -5580,10 +5864,10 @@ export class SporeSliceGame {
       controlsHint: this.gamepad.connected
         ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor. Keyboard Q/E/R sends social signals."
         : this.state.mode === "menu"
-          ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve"
+          ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve the next water-born body"
         : this.state.editorOpen
           ? "Species nest open. Creature Evolution grows unlocked blueprints; Species Nest swaps bodies and fast evolves hatchlings."
-          : "Left click move, WASD/Arrows steer, Shift sprint, Q/E/R signal species, Space/right click bite. Bring DNA home to hatch new bodies.",
+          : "Left click move, WASD/Arrows steer, Shift sprint, Q/E/R signal species, Space/right click bite. Bring DNA home to hatch new water-born bodies.",
     });
   }
 
