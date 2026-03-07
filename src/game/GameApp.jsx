@@ -34,6 +34,8 @@ const initialState = {
   territoryAlert: 0,
   territoryPopulation: null,
   activeMigration: null,
+  gamepadConnected: false,
+  gamepadLabel: "",
   nearbySpecies: [],
   nearbyNests: [],
   upgrades: {
@@ -149,7 +151,7 @@ export function GameApp() {
               <p className="status-copy">{uiState.controlsHint}</p>
               <div className={`status-banner ${alertTone}`}>
                 <span>{alertTitle}</span>
-                <strong>{surgeActive ? `Hot ${Math.round(uiState.surgeCharge * 100)}%` : uiState.runScore > 0 ? `Run ${uiState.runScore}` : uiState.canUpgrade ? "Nest ready" : "Leave the bowl"}</strong>
+                <strong>{uiState.gamepadConnected ? "Pad ready" : surgeActive ? `Hot ${Math.round(uiState.surgeCharge * 100)}%` : uiState.runScore > 0 ? `Run ${uiState.runScore}` : uiState.canUpgrade ? "Nest ready" : "Leave the bowl"}</strong>
               </div>
               <div className={`surge-strip ${surgeActive ? "active" : ""}`}>
                 <div className="surge-copy">
@@ -490,6 +492,7 @@ export function GameApp() {
                     <p>`WASD` or `Arrows` steer</p>
                     <p>`Shift` sprint</p>
                     <p>`Space` or `Right click` bite</p>
+                    <p>`Xbox controller` supported</p>
                     <p>`F` fullscreen</p>
                   </div>
                   <div>

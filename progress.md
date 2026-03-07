@@ -172,3 +172,39 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no full ecological resource graph, breeding system, social gameplay, or map expansion
   - no broad entity-count increase; the pass stays small and emergent rather than simulation-heavy
+
+## 2026-03-07 Xbox Controller Support
+
+- Current request: make the standalone Bone Dunes app playable with an Xbox controller.
+- Implementation approach:
+  - kept the existing keyboard/mouse path intact and layered Gamepad API support on top of the current input model
+  - added a test-only `window.__setTestGamepadState(...)` hook so controller input can be validated deterministically in browser automation
+- Implemented:
+  - added `navigator.getGamepads()` polling plus `gamepadconnected` / `gamepaddisconnected` handling in `src/game/SporeSliceGame.js`
+  - mapped controller input to the current game loop:
+    - left stick + D-pad = movement
+    - right stick = aim / facing
+    - `A`, `X`, `RT`, or `RB` = bite
+    - `B`, `LB`, or left-stick press = sprint
+    - `Start` = start hunt from menu or toggle the nest editor at the nest
+    - `Y` = fullscreen toggle
+  - updated state emission / `render_game_to_text` to report controller presence and live stick values
+  - updated HUD/menu copy so a connected controller advertises its mapping in the visible UI
+- Validation:
+  - `npm run build` passes after the controller pass
+  - shared web-game client capture:
+    - `output/web-game/gamepad-pass-1`
+  - controller screenshot captured and visually inspected:
+    - `output/playwright-gamepad-connected.png`
+  - deterministic browser checks:
+    - `A` from the menu started the hunt and reported `gamepad.connected: true` with label `Xbox Wireless Controller`
+    - left-stick movement traveled about `6.16` world units in `600ms`
+    - left-stick + sprint button traveled about `8.93` world units in `600ms` and reduced sprint charge to about `79%`
+    - right-stick aim changed player yaw from about `2.55` to `0.28`
+    - controller bite reduced scavenger HP from `44` to `15` and returned attack result `hit`
+    - `Start` opened and closed the nest editor when the player was in the nest
+    - clearing the test gamepad state returned `gamepad.connected` to `false`
+    - no browser console errors beyond the React DevTools info banner
+- Scope protected:
+  - no separate controller-only movement system or alternate camera rewrite
+  - reused the existing movement/combat/editor flows so controller support stays maintainable

@@ -60,6 +60,8 @@ const ECOSYSTEM_EVENT_MAX_DELAY = 28;
 const NEST_ATTACK_RANGE = 4.9;
 const CARCASS_TTL = 18;
 const MAX_CARCASSES = 6;
+const GAMEPAD_MOVE_DEADZONE = 0.18;
+const GAMEPAD_LOOK_DEADZONE = 0.22;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -80,6 +82,7 @@ const vectorA = new THREE.Vector3();
 const vectorB = new THREE.Vector3();
 const vectorC = new THREE.Vector3();
 const vectorD = new THREE.Vector3();
+const vectorE = new THREE.Vector3();
 const upVector = new THREE.Vector3(0, 1, 0);
 const TRAIT_LIMITS = Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.key, upgrade.costs.length]));
 const TRAIT_TITLES = {
@@ -133,6 +136,16 @@ function normalizeAngle(angle) {
     value += Math.PI * 2;
   }
   return value;
+}
+
+function applyAxisDeadzone(value, deadzone) {
+  const magnitude = Math.abs(value);
+  if (magnitude <= deadzone) {
+    return 0;
+  }
+
+  const normalized = (magnitude - deadzone) / (1 - deadzone);
+  return Math.sign(value) * clamp(normalized, 0, 1);
 }
 
 function makeCreatureModel({
@@ -842,6 +855,24 @@ export class SporeSliceGame {
       right: false,
       attackHeld: false,
     };
+    this.gamepad = {
+      connected: false,
+      label: "",
+      index: null,
+      moveX: 0,
+      moveY: 0,
+      lookX: 0,
+      lookY: 0,
+      sprint: false,
+      attackHeld: false,
+      attackPressed: false,
+      startPressed: false,
+      fullscreenPressed: false,
+      prevAttackHeld: false,
+      prevStartHeld: false,
+      prevFullscreenHeld: false,
+    };
+    this.gamepadTestState = null;
 
     this.playerVelocity = new THREE.Vector3();
     this.cameraTarget = new THREE.Vector3();
@@ -900,6 +931,8 @@ export class SporeSliceGame {
     this.resize = this.resize.bind(this);
     this.tick = this.tick.bind(this);
     this.handleKey = this.handleKey.bind(this);
+    this.handleGamepadConnection = this.handleGamepadConnection.bind(this);
+    this.handleGamepadDisconnection = this.handleGamepadDisconnection.bind(this);
     this.handleMouseDown = this.handleMouseDown.bind(this);
     this.handleMouseUp = this.handleMouseUp.bind(this);
     this.handleContextMenu = this.handleContextMenu.bind(this);
@@ -908,6 +941,8 @@ export class SporeSliceGame {
     window.addEventListener("resize", this.resize);
     window.addEventListener("keydown", this.handleKey);
     window.addEventListener("keyup", this.handleKey);
+    window.addEventListener("gamepadconnected", this.handleGamepadConnection);
+    window.addEventListener("gamepaddisconnected", this.handleGamepadDisconnection);
     window.addEventListener("blur", this.handleBlur);
     this.renderer.domElement.addEventListener("mousedown", this.handleMouseDown);
     this.renderer.domElement.addEventListener("mouseup", this.handleMouseUp);
@@ -1631,6 +1666,144 @@ export class SporeSliceGame {
     this.render();
   }
 
+  handleGamepadConnection(event) {
+    const pad = event.gamepad;
+    this.gamepad.connected = true;
+    this.gamepad.index = pad.index;
+    this.gamepad.label = pad.id || "Controller";
+    this.state.message = this.state.mode === "menu"
+      ? "Controller ready. Press A or Start to begin the hunt."
+      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites.`;
+    this.emitState();
+  }
+
+  handleGamepadDisconnection(event) {
+    if (this.gamepad.index != null && event.gamepad?.index !== this.gamepad.index && !this.gamepadTestState) {
+      return;
+    }
+
+    this.gamepad.connected = false;
+    this.gamepad.index = null;
+    this.gamepad.label = "";
+    this.gamepad.moveX = 0;
+    this.gamepad.moveY = 0;
+    this.gamepad.lookX = 0;
+    this.gamepad.lookY = 0;
+    this.gamepad.sprint = false;
+    this.gamepad.attackHeld = false;
+    this.gamepad.prevAttackHeld = false;
+    this.gamepad.prevStartHeld = false;
+    this.gamepad.prevFullscreenHeld = false;
+    this.emitState();
+  }
+
+  readGamepadSnapshot() {
+    if (this.gamepadTestState) {
+      const buttons = this.gamepadTestState.buttons ?? {};
+      return {
+        connected: this.gamepadTestState.connected !== false,
+        id: this.gamepadTestState.id ?? "Test Controller",
+        index: this.gamepadTestState.index ?? 0,
+        axes: Array.isArray(this.gamepadTestState.axes) ? this.gamepadTestState.axes : [0, 0, 0, 0],
+        buttons: Array.from({ length: 16 }, (_, index) => {
+          const value = buttons[index] ?? buttons[String(index)] ?? 0;
+          const pressed = typeof value === "object" ? Boolean(value.pressed) : Boolean(value);
+          const analogValue = typeof value === "object" && Number.isFinite(value.value) ? value.value : Number(value) || 0;
+          return { pressed, value: analogValue };
+        }),
+      };
+    }
+
+    if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") {
+      return null;
+    }
+
+    const pads = navigator.getGamepads();
+    if (!pads) {
+      return null;
+    }
+
+    const preferredPad = this.gamepad.index != null ? pads[this.gamepad.index] : null;
+    if (preferredPad) {
+      return preferredPad;
+    }
+
+    return pads.find((pad) => pad && pad.connected) ?? null;
+  }
+
+  pollGamepadInput() {
+    const pad = this.readGamepadSnapshot();
+    if (!pad || !pad.connected) {
+      if (this.gamepad.connected) {
+        this.handleGamepadDisconnection({ gamepad: { index: this.gamepad.index } });
+      }
+      return;
+    }
+
+    const newlyConnected = !this.gamepad.connected || this.gamepad.index !== pad.index || this.gamepad.label !== (pad.id || "Controller");
+    if (newlyConnected) {
+      this.gamepad.connected = true;
+      this.gamepad.index = pad.index;
+      this.gamepad.label = pad.id || "Controller";
+      if (this.state.mode !== "menu") {
+        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites.`;
+      }
+    }
+
+    const leftX = applyAxisDeadzone(pad.axes?.[0] ?? 0, GAMEPAD_MOVE_DEADZONE);
+    const leftY = applyAxisDeadzone(-(pad.axes?.[1] ?? 0), GAMEPAD_MOVE_DEADZONE);
+    const rightX = applyAxisDeadzone(pad.axes?.[2] ?? 0, GAMEPAD_LOOK_DEADZONE);
+    const rightY = applyAxisDeadzone(-(pad.axes?.[3] ?? 0), GAMEPAD_LOOK_DEADZONE);
+    const buttonPressed = (index) => Boolean(pad.buttons?.[index]?.pressed || (pad.buttons?.[index]?.value ?? 0) > 0.45);
+
+    const dpadX = Number(buttonPressed(15)) - Number(buttonPressed(14));
+    const dpadY = Number(buttonPressed(12)) - Number(buttonPressed(13));
+    const moveX = clamp(leftX + dpadX, -1, 1);
+    const moveY = clamp(leftY + dpadY, -1, 1);
+    const sprintHeld = buttonPressed(1) || buttonPressed(4) || buttonPressed(10);
+    const attackHeld = buttonPressed(0) || buttonPressed(2) || buttonPressed(5) || buttonPressed(7);
+    const startHeld = buttonPressed(9);
+    const fullscreenHeld = buttonPressed(3);
+
+    this.gamepad.moveX = moveX;
+    this.gamepad.moveY = moveY;
+    this.gamepad.lookX = rightX;
+    this.gamepad.lookY = rightY;
+    this.gamepad.sprint = sprintHeld;
+    this.gamepad.attackHeld = attackHeld;
+    this.gamepad.attackPressed = attackHeld && !this.gamepad.prevAttackHeld;
+    this.gamepad.startPressed = startHeld && !this.gamepad.prevStartHeld;
+    this.gamepad.fullscreenPressed = fullscreenHeld && !this.gamepad.prevFullscreenHeld;
+
+    if ((Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05) && !this.state.editorOpen) {
+      this.clearMoveTarget();
+    }
+
+    if (this.gamepad.attackPressed) {
+      if (this.state.mode === "menu") {
+        this.startGame();
+      } else {
+        this.queueAttack();
+      }
+    }
+
+    if (this.gamepad.startPressed) {
+      if (this.state.mode === "menu") {
+        this.startGame();
+      } else if (this.state.zone === "nest" && this.state.respawnTimer <= 0) {
+        this.toggleEditor();
+      }
+    }
+
+    if (this.gamepad.fullscreenPressed) {
+      this.toggleFullscreen();
+    }
+
+    this.gamepad.prevAttackHeld = attackHeld;
+    this.gamepad.prevStartHeld = startHeld;
+    this.gamepad.prevFullscreenHeld = fullscreenHeld;
+  }
+
   handleKey(event) {
     const pressed = event.type === "keydown";
     if (BLOCKED_BROWSER_KEYS.has(event.code)) {
@@ -1834,6 +2007,12 @@ export class SporeSliceGame {
 
   installTestingHooks() {
     window.__sporeSliceGameInstance = this;
+    window.__setTestGamepadState = (state = null) => {
+      this.gamepadTestState = state;
+      if (!state) {
+        this.handleGamepadDisconnection({ gamepad: { index: this.gamepad.index } });
+      }
+    };
     window.advanceTime = (ms = 16) => {
       this.manualStepping = true;
       const frames = Math.max(1, Math.round(ms / (FIXED_STEP * 1000)));
@@ -1892,6 +2071,15 @@ export class SporeSliceGame {
         message: this.state.message,
         objective: this.state.objective,
         ecosystemNotice: this.state.ecosystemNotice,
+        gamepad: {
+          connected: this.gamepad.connected,
+          label: this.gamepad.label,
+          moveX: Number(this.gamepad.moveX.toFixed(2)),
+          moveY: Number(this.gamepad.moveY.toFixed(2)),
+          lookX: Number(this.gamepad.lookX.toFixed(2)),
+          lookY: Number(this.gamepad.lookY.toFixed(2)),
+          sprint: this.gamepad.sprint,
+        },
         territory: currentTerritory
           ? {
               speciesId: currentTerritory.speciesId,
@@ -3221,13 +3409,18 @@ export class SporeSliceGame {
       this.player.attackResult = this.player.attackCooldown > 0 ? "cooldown" : "ready";
     }
 
-    const moveForward = editorLocked ? 0 : Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
-    const moveStrafe = editorLocked ? 0 : Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
+    const digitalForward = Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
+    const digitalStrafe = Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
+    const moveForward = editorLocked ? 0 : clamp(digitalForward + this.gamepad.moveY, -1, 1);
+    const moveStrafe = editorLocked ? 0 : clamp(digitalStrafe + this.gamepad.moveX, -1, 1);
     const hasDirectInput = moveForward !== 0 || moveStrafe !== 0;
+    const hasGamepadAim = !editorLocked && (Math.abs(this.gamepad.lookX) > 0.001 || Math.abs(this.gamepad.lookY) > 0.001);
     const desiredDirection = vectorA.set(0, 0, 0);
+    const aimDirection = vectorE.set(0, 0, 0);
     let moving = false;
+    let hasAimDirection = false;
 
-    if (hasDirectInput) {
+    if (hasDirectInput || hasGamepadAim) {
       this.camera.getWorldDirection(vectorB);
       vectorB.y = 0;
       if (vectorB.lengthSq() <= 0.0001) {
@@ -3237,11 +3430,22 @@ export class SporeSliceGame {
       }
 
       vectorC.crossVectors(vectorB, upVector).normalize();
-      desiredDirection.copy(vectorC).multiplyScalar(moveStrafe).addScaledVector(vectorB, moveForward);
-      if (desiredDirection.lengthSq() > 1) {
-        desiredDirection.normalize();
+
+      if (hasDirectInput) {
+        desiredDirection.copy(vectorC).multiplyScalar(moveStrafe).addScaledVector(vectorB, moveForward);
+        if (desiredDirection.lengthSq() > 1) {
+          desiredDirection.normalize();
+        }
+        moving = desiredDirection.lengthSq() > 0.0001;
       }
-      moving = desiredDirection.lengthSq() > 0.0001;
+
+      if (hasGamepadAim) {
+        aimDirection.copy(vectorC).multiplyScalar(this.gamepad.lookX).addScaledVector(vectorB, this.gamepad.lookY);
+        if (aimDirection.lengthSq() > 1) {
+          aimDirection.normalize();
+        }
+        hasAimDirection = aimDirection.lengthSq() > 0.01;
+      }
     } else if (this.moveTarget.active) {
       desiredDirection.subVectors(this.moveTarget.position, this.player.group.position).setY(0);
       const distanceToTarget = desiredDirection.length();
@@ -3256,6 +3460,10 @@ export class SporeSliceGame {
     if (editorLocked) {
       this.clearMoveTarget();
       this.input.attackQueued = false;
+    }
+
+    if (hasAimDirection && this.player.attackPhase === "idle") {
+      this.player.attackDirection.copy(aimDirection);
     }
 
     if (this.player.attackPhase !== "idle") {
@@ -3279,7 +3487,7 @@ export class SporeSliceGame {
       }
     }
 
-    const sprinting = !editorLocked && this.input.sprint && moving && this.player.sprintCharge > 0.05;
+    const sprinting = !editorLocked && (this.input.sprint || this.gamepad.sprint) && moving && this.player.sprintCharge > 0.05;
     if (sprinting) {
       this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE);
     } else {
@@ -3306,9 +3514,11 @@ export class SporeSliceGame {
 
     dampVector(this.player.velocity, desiredVelocity, moving ? (sprinting ? 18 : 14) : 8, dt);
 
-    if (moving || this.player.attackLungeTimer > 0 || this.player.velocity.lengthSq() > 0.04 || this.player.attackPhase !== "idle") {
+    if (moving || hasAimDirection || this.player.attackLungeTimer > 0 || this.player.velocity.lengthSq() > 0.04 || this.player.attackPhase !== "idle") {
       const yawSource = this.player.attackPhase !== "idle"
         ? this.player.attackDirection
+        : hasAimDirection
+          ? aimDirection
         : this.player.velocity.lengthSq() > 0.04
           ? this.player.velocity
           : desiredDirection;
@@ -3604,6 +3814,7 @@ export class SporeSliceGame {
     this.elapsed += dt;
     const simDt = dt * (this.impactSlow > 0 ? 0.24 : 1);
     this.impactSlow = Math.max(0, this.impactSlow - dt);
+    this.pollGamepadInput();
     this.updateAmbient(dt);
     this.updatePlayer(simDt);
     this.updateFood(simDt);
@@ -3766,6 +3977,8 @@ export class SporeSliceGame {
             progress: 1 - clamp(this.ecosystem.activeEvent.timer / this.ecosystem.activeEvent.duration, 0, 1),
           }
         : null,
+      gamepadConnected: this.gamepad.connected,
+      gamepadLabel: this.gamepad.label,
       nearbySpecies,
       nearbyNests,
       upgrades: this.state.upgrades,
@@ -3783,8 +3996,10 @@ export class SporeSliceGame {
       hasSave: this.state.hasSave,
       canUpgrade: this.state.zone === "nest" && this.state.mode !== "menu",
       canOpenEditor: this.state.zone === "nest" && this.state.mode === "playing" && this.state.respawnTimer <= 0,
-      controlsHint: this.state.mode === "menu"
-        ? "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen"
+      controlsHint: this.gamepad.connected
+        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor"
+        : this.state.mode === "menu"
+          ? "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen"
         : this.state.editorOpen
           ? "Nest editor open. Spend DNA, then press Esc or Close Editor."
           : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite. Territories react to you.",
@@ -3796,6 +4011,8 @@ export class SporeSliceGame {
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.handleKey);
     window.removeEventListener("keyup", this.handleKey);
+    window.removeEventListener("gamepadconnected", this.handleGamepadConnection);
+    window.removeEventListener("gamepaddisconnected", this.handleGamepadDisconnection);
     window.removeEventListener("blur", this.handleBlur);
     this.renderer.domElement.removeEventListener("mousedown", this.handleMouseDown);
     this.renderer.domElement.removeEventListener("mouseup", this.handleMouseUp);
@@ -3806,6 +4023,9 @@ export class SporeSliceGame {
     }
     if (window.render_game_to_text) {
       delete window.render_game_to_text;
+    }
+    if (window.__setTestGamepadState) {
+      delete window.__setTestGamepadState;
     }
     if (window.__sporeSliceGameInstance === this) {
       delete window.__sporeSliceGameInstance;
