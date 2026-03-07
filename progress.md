@@ -269,6 +269,31 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
   - no controller camera rewrite
   - no change to keyboard/mouse or combat controls
 
+## 2026-03-07 Xbox D-pad Menu Navigation Pass
+
+- Current request: let the Xbox controller D-pad move through menu options and activate focused UI choices.
+- Implemented:
+  - added overlay-only D-pad navigation for visible menu/editor buttons in `src/game/SporeSliceGame.js`
+  - routed `A/RT` to confirm the focused menu/editor choice whenever a menu overlay is open instead of sending attack input into the world
+  - added immediate controller focus priming so the first visible button highlights as soon as the pad is detected on the start menu
+  - added a visible controller focus ring in `src/index.css`
+  - updated controller-facing copy in `src/game/GameApp.jsx` and `src/game/SporeSliceGame.js` to explain `D-pad` navigation and `A` confirm behavior
+- Validation:
+  - `npm run build` passes
+  - shared client screenshot/state captured at `output/web-game/gamepad-menu-nav-pass`
+  - visual inspection confirmed the menu layout still reads cleanly after the controller hint and focus styling changes
+  - deterministic browser checks with `window.__setTestGamepadState(...)` confirmed:
+    - initial controller detection highlights `Resume Species` on the menu automatically
+    - D-pad right focuses `New Organism`, D-pad left returns focus to `Resume Species`
+    - `A` on the focused start option leaves the menu and enters live play
+    - at the nest, `View/Select` still opens the editor on `Creature Evolution`
+    - D-pad right focuses the `Species` tab and `A` switches tabs
+    - D-pad down continues moving through species-menu actions after the tab switch
+    - browser console reported `0` errors
+- Scope protected:
+  - no UI rewrite, only controller navigation/focus behavior
+  - no changes to mouse/keyboard menu interaction
+
 ## 2026-03-07 Evolution-Core Species Nest Pass
 
 - Current request: make evolution the core gameplay loop instead of a live-mutate upgrade list, reduce the oversized top-left panel, remove the old quiet-window framing, and add nest-based egg laying, body switching, and maturation.

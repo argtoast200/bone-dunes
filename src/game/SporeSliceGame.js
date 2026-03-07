@@ -28,6 +28,7 @@ import {
 import { buildWorld, getBiomeDefAtPosition, getBiomeKeyAtPosition, getTerrainHeight } from "./world";
 
 const FIXED_STEP = 1 / 60;
+const GAMEPAD_FOCUS_CLASS = "is-gamepad-focused";
 const PLAYER_HEIGHT = 2.2;
 const CAMERA_HEIGHT = 5.8;
 const CAMERA_DISTANCE = 10.5;
@@ -1372,13 +1373,22 @@ export class SporeSliceGame {
       attackPressed: false,
       startPressed: false,
       selectPressed: false,
+      dpadUpPressed: false,
+      dpadDownPressed: false,
+      dpadLeftPressed: false,
+      dpadRightPressed: false,
       fullscreenPressed: false,
       prevAttackHeld: false,
       prevStartHeld: false,
       prevSelectHeld: false,
+      prevDpadUpHeld: false,
+      prevDpadDownHeld: false,
+      prevDpadLeftHeld: false,
+      prevDpadRightHeld: false,
       prevFullscreenHeld: false,
     };
     this.gamepadTestState = null;
+    this.overlayFocusFrame = null;
 
     this.playerVelocity = new THREE.Vector3();
     this.cameraTarget = new THREE.Vector3();
@@ -2026,6 +2036,7 @@ export class SporeSliceGame {
       ? "Spend DNA on the next body plan, then lay the egg at the nest."
       : "Switch bodies, watch hatchlings grow, or fast evolve them with species XP.";
     this.emitState();
+    this.queueOverlayFocus();
     return true;
   }
 
@@ -3034,6 +3045,7 @@ export class SporeSliceGame {
 
   startGame() {
     if (this.state.mode === "menu") {
+      this.clearOverlayButtonFocus();
       this.state.mode = "playing";
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
@@ -3062,9 +3074,12 @@ export class SporeSliceGame {
     this.gamepad.index = pad.index;
     this.gamepad.label = pad.id || "Controller";
     this.state.message = this.state.mode === "menu"
-      ? "Controller ready. Press A or Start to begin the hunt."
-      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, and View opens evolution at the nest.`;
+      ? "Controller ready. D-pad moves through menu options and A confirms."
+      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, D-pad navigates menus, and View opens evolution at the nest.`;
     this.emitState();
+    if (this.isOverlayNavigationActive()) {
+      this.primeOverlayFocus();
+    }
   }
 
   handleGamepadDisconnection(event) {
@@ -3084,7 +3099,12 @@ export class SporeSliceGame {
     this.gamepad.prevAttackHeld = false;
     this.gamepad.prevStartHeld = false;
     this.gamepad.prevSelectHeld = false;
+    this.gamepad.prevDpadUpHeld = false;
+    this.gamepad.prevDpadDownHeld = false;
+    this.gamepad.prevDpadLeftHeld = false;
+    this.gamepad.prevDpadRightHeld = false;
     this.gamepad.prevFullscreenHeld = false;
+    this.clearOverlayButtonFocus();
     this.emitState();
   }
 
@@ -3137,7 +3157,10 @@ export class SporeSliceGame {
       this.gamepad.index = pad.index;
       this.gamepad.label = pad.id || "Controller";
       if (this.state.mode !== "menu") {
-        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, and View opens evolution at the nest.`;
+        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, D-pad navigates menus, and View opens evolution at the nest.`;
+      }
+      if (this.isOverlayNavigationActive()) {
+        this.primeOverlayFocus();
       }
     }
 
@@ -3147,8 +3170,13 @@ export class SporeSliceGame {
     const rightY = applyAxisDeadzone(-(pad.axes?.[3] ?? 0), GAMEPAD_LOOK_DEADZONE);
     const buttonPressed = (index) => Boolean(pad.buttons?.[index]?.pressed || (pad.buttons?.[index]?.value ?? 0) > 0.45);
 
-    const dpadX = Number(buttonPressed(15)) - Number(buttonPressed(14));
-    const dpadY = Number(buttonPressed(12)) - Number(buttonPressed(13));
+    const overlayNavigationActive = this.isOverlayNavigationActive();
+    const dpadUpHeld = buttonPressed(12);
+    const dpadDownHeld = buttonPressed(13);
+    const dpadLeftHeld = buttonPressed(14);
+    const dpadRightHeld = buttonPressed(15);
+    const dpadX = overlayNavigationActive ? 0 : Number(dpadRightHeld) - Number(dpadLeftHeld);
+    const dpadY = overlayNavigationActive ? 0 : Number(dpadUpHeld) - Number(dpadDownHeld);
     const moveX = clamp(leftX + dpadX, -1, 1);
     const moveY = clamp(leftY + dpadY, -1, 1);
     const sprintHeld = buttonPressed(1) || buttonPressed(4) || buttonPressed(10);
@@ -3166,6 +3194,10 @@ export class SporeSliceGame {
     this.gamepad.attackPressed = attackHeld && !this.gamepad.prevAttackHeld;
     this.gamepad.startPressed = startHeld && !this.gamepad.prevStartHeld;
     this.gamepad.selectPressed = selectHeld && !this.gamepad.prevSelectHeld;
+    this.gamepad.dpadUpPressed = dpadUpHeld && !this.gamepad.prevDpadUpHeld;
+    this.gamepad.dpadDownPressed = dpadDownHeld && !this.gamepad.prevDpadDownHeld;
+    this.gamepad.dpadLeftPressed = dpadLeftHeld && !this.gamepad.prevDpadLeftHeld;
+    this.gamepad.dpadRightPressed = dpadRightHeld && !this.gamepad.prevDpadRightHeld;
     this.gamepad.fullscreenPressed = fullscreenHeld && !this.gamepad.prevFullscreenHeld;
 
     if ((Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05) && !this.state.editorOpen) {
@@ -3173,10 +3205,24 @@ export class SporeSliceGame {
     }
 
     if (this.gamepad.attackPressed) {
-      if (this.state.mode === "menu") {
+      if (overlayNavigationActive) {
+        this.activateOverlayFocus();
+      } else if (this.state.mode === "menu") {
         this.startGame();
       } else {
         this.queueAttack();
+      }
+    }
+
+    if (overlayNavigationActive) {
+      if (this.gamepad.dpadUpPressed) {
+        this.moveOverlayFocus("up");
+      } else if (this.gamepad.dpadDownPressed) {
+        this.moveOverlayFocus("down");
+      } else if (this.gamepad.dpadLeftPressed) {
+        this.moveOverlayFocus("left");
+      } else if (this.gamepad.dpadRightPressed) {
+        this.moveOverlayFocus("right");
       }
     }
 
@@ -3201,6 +3247,10 @@ export class SporeSliceGame {
     this.gamepad.prevAttackHeld = attackHeld;
     this.gamepad.prevStartHeld = startHeld;
     this.gamepad.prevSelectHeld = selectHeld;
+    this.gamepad.prevDpadUpHeld = dpadUpHeld;
+    this.gamepad.prevDpadDownHeld = dpadDownHeld;
+    this.gamepad.prevDpadLeftHeld = dpadLeftHeld;
+    this.gamepad.prevDpadRightHeld = dpadRightHeld;
     this.gamepad.prevFullscreenHeld = fullscreenHeld;
   }
 
@@ -3318,6 +3368,7 @@ export class SporeSliceGame {
     this.input.right = false;
     this.input.sprint = false;
     this.input.attackHeld = false;
+    this.clearOverlayButtonFocus();
   }
 
   setVirtualInput(key, pressed) {
@@ -3389,6 +3440,165 @@ export class SporeSliceGame {
     document.exitFullscreen?.();
   }
 
+  isOverlayNavigationActive() {
+    return this.state.mode === "menu" || this.state.editorOpen;
+  }
+
+  clearOverlayButtonFocus() {
+    if (this.overlayFocusFrame != null) {
+      window.cancelAnimationFrame(this.overlayFocusFrame);
+      this.overlayFocusFrame = null;
+    }
+    document.querySelectorAll(`.${GAMEPAD_FOCUS_CLASS}`).forEach((element) => {
+      element.classList.remove(GAMEPAD_FOCUS_CLASS);
+    });
+  }
+
+  getOverlayFocusableButtons() {
+    const selector = this.state.editorOpen ? ".editor-overlay" : this.state.mode === "menu" ? ".menu-overlay" : null;
+    if (!selector) {
+      return [];
+    }
+    const overlay = document.querySelector(selector);
+    if (!overlay) {
+      return [];
+    }
+    return Array.from(overlay.querySelectorAll("button")).filter((button) => {
+      if (button.disabled) {
+        return false;
+      }
+      const style = window.getComputedStyle(button);
+      if (style.display === "none" || style.visibility === "hidden") {
+        return false;
+      }
+      const rect = button.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+  }
+
+  focusOverlayButton(button) {
+    if (!button) {
+      return false;
+    }
+    this.clearOverlayButtonFocus();
+    button.classList.add(GAMEPAD_FOCUS_CLASS);
+    button.focus({ preventScroll: true });
+    button.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "auto",
+    });
+    return true;
+  }
+
+  primeOverlayFocus() {
+    const buttons = this.getOverlayFocusableButtons();
+    if (!buttons.length) {
+      this.queueOverlayFocus();
+      return false;
+    }
+    const active = buttons.includes(document.activeElement) ? document.activeElement : buttons[0];
+    return this.focusOverlayButton(active);
+  }
+
+  queueOverlayFocus() {
+    if (this.overlayFocusFrame != null) {
+      window.cancelAnimationFrame(this.overlayFocusFrame);
+    }
+    this.overlayFocusFrame = window.requestAnimationFrame(() => {
+      this.overlayFocusFrame = null;
+      if (!this.isOverlayNavigationActive()) {
+        this.clearOverlayButtonFocus();
+        return;
+      }
+      const buttons = this.getOverlayFocusableButtons();
+      if (!buttons.length) {
+        return;
+      }
+      const active = document.activeElement;
+      if (buttons.includes(active)) {
+        this.focusOverlayButton(active);
+        return;
+      }
+      this.focusOverlayButton(buttons[0]);
+    });
+  }
+
+  moveOverlayFocus(direction) {
+    const buttons = this.getOverlayFocusableButtons().map((button) => {
+      const rect = button.getBoundingClientRect();
+      return {
+        button,
+        rect,
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+      };
+    });
+    if (!buttons.length) {
+      return false;
+    }
+
+    const active = document.activeElement;
+    const current = buttons.find((entry) => entry.button === active) ?? buttons[0];
+    const horizontal = direction === "left" || direction === "right";
+    const sign = direction === "left" || direction === "up" ? -1 : 1;
+    const directional = buttons
+      .filter((entry) => entry.button !== current.button)
+      .filter((entry) => {
+        const delta = horizontal ? entry.centerX - current.centerX : entry.centerY - current.centerY;
+        return sign * delta > 8;
+      });
+
+    const pickBest = (entries, wrap = false) => {
+      if (!entries.length) {
+        return null;
+      }
+      return entries
+        .slice()
+        .sort((left, right) => {
+          const leftPrimary = horizontal ? Math.abs(left.centerX - current.centerX) : Math.abs(left.centerY - current.centerY);
+          const rightPrimary = horizontal ? Math.abs(right.centerX - current.centerX) : Math.abs(right.centerY - current.centerY);
+          const leftSecondary = horizontal ? Math.abs(left.centerY - current.centerY) : Math.abs(left.centerX - current.centerX);
+          const rightSecondary = horizontal ? Math.abs(right.centerY - current.centerY) : Math.abs(right.centerX - current.centerX);
+          const leftScore = leftPrimary + leftSecondary * 0.38 + (wrap ? 10 : 0);
+          const rightScore = rightPrimary + rightSecondary * 0.38 + (wrap ? 10 : 0);
+          return leftScore - rightScore;
+        })[0];
+    };
+
+    let target = pickBest(directional, false);
+    if (!target) {
+      const wrapCandidates = buttons
+        .filter((entry) => entry.button !== current.button)
+        .sort((left, right) => {
+          const leftAxis = horizontal ? left.centerX : left.centerY;
+          const rightAxis = horizontal ? right.centerX : right.centerY;
+          if (leftAxis !== rightAxis) {
+            return sign < 0 ? leftAxis - rightAxis : rightAxis - leftAxis;
+          }
+          const leftCross = horizontal ? left.centerY : left.centerX;
+          const rightCross = horizontal ? right.centerY : right.centerX;
+          return Math.abs(leftCross - (horizontal ? current.centerY : current.centerX))
+            - Math.abs(rightCross - (horizontal ? current.centerY : current.centerX));
+        });
+      target = pickBest(wrapCandidates.slice(0, 3), true);
+    }
+
+    return this.focusOverlayButton(target?.button ?? current.button);
+  }
+
+  activateOverlayFocus() {
+    const buttons = this.getOverlayFocusableButtons();
+    if (!buttons.length) {
+      return false;
+    }
+    const active = buttons.includes(document.activeElement) ? document.activeElement : buttons[0];
+    this.focusOverlayButton(active);
+    active.click();
+    this.queueOverlayFocus();
+    return true;
+  }
+
   toggleEditor(forceOpen) {
     const nextOpen = typeof forceOpen === "boolean" ? forceOpen : !this.state.editorOpen;
     if (nextOpen) {
@@ -3410,9 +3620,13 @@ export class SporeSliceGame {
       }
       this.state.editorOpen = false;
       this.state.message = "Nest sealed. Take the active body back into the dunes.";
+      this.clearOverlayButtonFocus();
       this.renderer.domElement.focus();
     }
     this.emitState();
+    if (nextOpen) {
+      this.queueOverlayFocus();
+    }
     return true;
   }
 
@@ -3832,6 +4046,7 @@ export class SporeSliceGame {
   }
 
   resetProgress() {
+    this.clearOverlayButtonFocus();
     clearSave();
     const starterCreature = createSpeciesCreature({
       traits: DEFAULT_SAVE.upgrades,
@@ -6202,7 +6417,7 @@ export class SporeSliceGame {
         favoredBiomes: draftPath.favoredBiomes,
       },
       controlsHint: this.gamepad.connected
-        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, View opens Creature Evolution at the nest. Keyboard Q/E/R sends social signals."
+        ? "Xbox pad: left stick move, right stick aim, A/RT bite or confirm, B/LB sprint, D-pad navigates menus, View opens Creature Evolution at the nest. Keyboard Q/E/R sends social signals."
         : this.state.mode === "menu"
           ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve the next water-born body"
         : this.state.editorOpen

@@ -328,7 +328,7 @@ export function GameApp() {
       .filter(Boolean),
   }));
   const liveControls = uiState.gamepadConnected
-    ? "A or RT bite • B or LB sprint • View opens Creature Evolution at the nest • Q/E/R social on keyboard"
+    ? "A or RT bite/select • B or LB sprint • D-pad navigates menus • View opens Creature Evolution at the nest"
     : "Shift sprint • Q/E/R social • Space or right click bite • F fullscreen";
 
   let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";
@@ -552,6 +552,7 @@ export function GameApp() {
                     <p>`Q`, `E`, `R` social signals</p>
                     <p>`Shift` sprint</p>
                     <p>`Space`, `Right click`, or controller face buttons bite</p>
+                    <p>`D-pad` moves through menu choices, `A` confirms, `View` opens evolution at the nest</p>
                   </div>
                 </div>
 
