@@ -491,3 +491,53 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no multi-biome campaign jump, no new editor rewrite, no second aquatic species family
   - the pass stayed focused on making the aquatic start alive and tying two frontier routes into evolution in a way the current architecture already supports
+
+## 2026-03-07 Biome Affinity Species Path Pass
+
+- Current request: follow through on the next obvious Spore-like step after aquatic frontiers by making biome choice change how the species actually plays, with a meaningful shoreline transition instead of generic movement everywhere.
+- Implementation focus:
+  - no new stage system or map rewrite
+  - use the existing trait set to create a few strong species paths with different biome feel
+  - make the first land push feel earned through movement penalties and shore-readiness rather than hard locks
+- Implemented:
+  - extended `src/game/SporeSliceGame.js` with lightweight path modeling:
+    - `Nursery Drifter`
+    - `Water Glider`
+    - `Marsh Ambusher`
+    - `Dune Runner`
+    - `Basin Bruiser`
+  - each path now carries per-biome movement/combat bias:
+    - speed multipliers
+    - traction / turn bias
+    - sprint drain bias
+    - attack momentum bias
+  - added shoreline readiness so weak water-first bodies now feel worse on land until they mature or evolve cleaner shoreline anatomy
+    - shore-soft bodies lose more speed and traction on land
+    - shore-ready bodies keep their rhythm during the water-to-land break
+  - updated the evolution UI and live HUD in `src/game/GameApp.jsx` to surface:
+    - current path
+    - current shore state
+    - next egg path / shore state
+  - updated `render_game_to_text` so deterministic testing can see current path and draft path directly
+- Validation:
+  - `npm run build` passes after the path pass
+  - required standalone `$WEB_GAME_CLIENT` run completed, but again returned no useful stdout in this environment; artifact files were still emitted
+  - saved validation artifacts:
+    - `output/web-game/biome-affinity-pass/client-shot-0.png`
+    - `output/web-game/biome-affinity-pass/client-state-0.json`
+    - `output/web-game/biome-affinity-pass/hud-shot.png`
+    - `output/web-game/biome-affinity-pass/editor-shot.png`
+  - visual inspection:
+    - confirmed the live HUD now shows `Path <...>` and the current shore state in the compact focus strip instead of adding a new panel
+    - confirmed the evolution screen now previews body identity as path + shore state, which makes “what this egg becomes” much easier to read
+  - deterministic browser checks:
+    - fresh starter body in `Bone Dunes` reads `Nursery Drifter`, `Water-bound`, and traveled about `5.31` world units over the chosen land-move burst with a speed factor around `0.58`
+    - a `legs:2 / tail:1` build reads `Dune Runner`, `Shore-ready`, and traveled about `6.8` world units over the same land burst with a speed factor around `0.78`
+    - a `tail:1 / crest:1` build reads `Water Glider` and traveled about `7.78` world units in the origin-water move burst with a speed factor around `0.92`
+    - a `jaw:2 / horns:1 / spikes:2` build reads `Basin Bruiser` and traveled about `6.25` world units in that same water burst with a speed factor around `0.70`
+    - before the final text-state-only patch, a direct basin-combat comparison also showed stronger biome combat momentum for `Basin Bruiser` than `Water Glider` (`attackFactor 1.12` vs `0.93`)
+    - the evolution draft preview correctly flips to `Dune Runner` / `Land-forged` when the draft is switched to a shoreline-focused body plan
+    - Playwright browser console reported `0` errors
+- Scope protected:
+  - no extra biomes, no freeform procedural editor, no new combat tree
+  - the pass stayed focused on making the same map feel more like different habitats for different bodies

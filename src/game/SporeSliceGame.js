@@ -87,6 +87,7 @@ const SOCIAL_CHAIN_WINDOW = 5.5;
 const SOCIAL_COOLDOWN = 0.85;
 const SOCIAL_EMOTE_DURATION = 0.7;
 const BIOME_MASTERY_MAX = 100;
+const SHORE_READY_THRESHOLD = 0.58;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -109,6 +110,68 @@ const SOCIAL_VERBS = [
 ];
 const SOCIAL_VERB_BY_CODE = Object.fromEntries(SOCIAL_VERBS.map((verb) => [verb.code, verb.key]));
 const SOCIAL_VERB_BY_KEY = Object.fromEntries(SOCIAL_VERBS.map((verb) => [verb.key, verb]));
+const SPECIES_PATH_DEFS = {
+  nestling: {
+    key: "nestling",
+    label: "Nursery Drifter",
+    shortLabel: "Drifter",
+    summary: "Soft-bodied swimmer still learning whether the line belongs in water or on land.",
+    favoredBiomes: ["Origin Waters", "Sunlit Shallows"],
+    biomeSpeed: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.96, boneDunes: 0.94, jawBasin: 0.9 },
+    biomeTraction: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.98, boneDunes: 0.94, jawBasin: 0.9 },
+    biomeTurn: { originWaters: 1.08, sunlitShallows: 1.03, glowMarsh: 0.98, boneDunes: 0.96, jawBasin: 0.92 },
+    biomeSprintDrain: { originWaters: 0.94, sunlitShallows: 0.98, glowMarsh: 1.02, boneDunes: 1.08, jawBasin: 1.12 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1, glowMarsh: 0.98, boneDunes: 0.96, jawBasin: 0.94 },
+  },
+  waterGlider: {
+    key: "waterGlider",
+    label: "Water Glider",
+    shortLabel: "Glider",
+    summary: "Tail-and-crest bodies carve clean lines through water and hug the shoreline with speed.",
+    favoredBiomes: ["Origin Waters", "Sunlit Shallows"],
+    biomeSpeed: { originWaters: 1.14, sunlitShallows: 1.11, glowMarsh: 1, boneDunes: 0.9, jawBasin: 0.88 },
+    biomeTraction: { originWaters: 1.1, sunlitShallows: 1.08, glowMarsh: 1.02, boneDunes: 0.92, jawBasin: 0.9 },
+    biomeTurn: { originWaters: 1.16, sunlitShallows: 1.12, glowMarsh: 1.02, boneDunes: 0.94, jawBasin: 0.92 },
+    biomeSprintDrain: { originWaters: 0.84, sunlitShallows: 0.9, glowMarsh: 0.96, boneDunes: 1.08, jawBasin: 1.12 },
+    biomeAttack: { originWaters: 1.04, sunlitShallows: 1.03, glowMarsh: 1, boneDunes: 0.98, jawBasin: 0.96 },
+  },
+  marshAmbusher: {
+    key: "marshAmbusher",
+    label: "Marsh Ambusher",
+    shortLabel: "Ambusher",
+    summary: "Glow-and-spike bodies sit deep in soft ground, then explode into close-range strikes.",
+    favoredBiomes: ["Glow Marsh", "Sunlit Shallows"],
+    biomeSpeed: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 1.08, boneDunes: 0.97, jawBasin: 0.96 },
+    biomeTraction: { originWaters: 1, sunlitShallows: 1.02, glowMarsh: 1.18, boneDunes: 0.96, jawBasin: 1.01 },
+    biomeTurn: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.08, boneDunes: 0.98, jawBasin: 0.99 },
+    biomeSprintDrain: { originWaters: 0.98, sunlitShallows: 0.98, glowMarsh: 0.86, boneDunes: 1.02, jawBasin: 1.04 },
+    biomeAttack: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.1, boneDunes: 1, jawBasin: 1.02 },
+  },
+  duneRunner: {
+    key: "duneRunner",
+    label: "Dune Runner",
+    shortLabel: "Runner",
+    summary: "Long-legged chase bodies cross open sand cleanly and turn speed into long hunts.",
+    favoredBiomes: ["Bone Dunes", "Sunlit Shallows"],
+    biomeSpeed: { originWaters: 0.92, sunlitShallows: 1.03, glowMarsh: 0.98, boneDunes: 1.13, jawBasin: 1.05 },
+    biomeTraction: { originWaters: 0.94, sunlitShallows: 1.02, glowMarsh: 0.96, boneDunes: 1.1, jawBasin: 1.04 },
+    biomeTurn: { originWaters: 0.96, sunlitShallows: 1.04, glowMarsh: 0.98, boneDunes: 1.09, jawBasin: 1.03 },
+    biomeSprintDrain: { originWaters: 1.06, sunlitShallows: 0.96, glowMarsh: 1.02, boneDunes: 0.8, jawBasin: 0.9 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 0.99, boneDunes: 1.04, jawBasin: 1.02 },
+  },
+  basinBruiser: {
+    key: "basinBruiser",
+    label: "Basin Bruiser",
+    shortLabel: "Bruiser",
+    summary: "Jaw-and-horn frames absorb punishment, push bodies around, and own hard ground.",
+    favoredBiomes: ["Jaw Basin", "Bone Dunes"],
+    biomeSpeed: { originWaters: 0.86, sunlitShallows: 0.92, glowMarsh: 0.97, boneDunes: 1, jawBasin: 1.06 },
+    biomeTraction: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 1.02, boneDunes: 1.05, jawBasin: 1.12 },
+    biomeTurn: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 0.98, boneDunes: 1, jawBasin: 1.02 },
+    biomeSprintDrain: { originWaters: 1.12, sunlitShallows: 1.06, glowMarsh: 1, boneDunes: 0.98, jawBasin: 0.92 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.02, glowMarsh: 1.04, boneDunes: 1.07, jawBasin: 1.14 },
+  },
+};
 
 const vectorA = new THREE.Vector3();
 const vectorB = new THREE.Vector3();
@@ -556,6 +619,51 @@ function getTraitLevels(saveData) {
   }, {});
 }
 
+function computeSpeciesPath(upgrades, profile = null) {
+  const scores = {
+    waterGlider: upgrades.tail * 1.12 + upgrades.crest * 0.94 + upgrades.glow * 0.18 - upgrades.spikes * 0.12,
+    marshAmbusher: upgrades.glow * 1.02 + upgrades.spikes * 0.86 + upgrades.crest * 0.22 + upgrades.jaw * 0.16,
+    duneRunner: upgrades.legs * 1.08 + upgrades.tail * 0.68 + upgrades.jaw * 0.14 - upgrades.spikes * 0.08,
+    basinBruiser: upgrades.jaw * 0.96 + upgrades.horns * 0.92 + upgrades.spikes * 0.84 + upgrades.tail * 0.12,
+  };
+  const winner = Object.entries(scores).sort((left, right) => right[1] - left[1])[0];
+  const winnerKey = winner && winner[1] >= 0.9 ? winner[0] : "nestling";
+  const pathDef = SPECIES_PATH_DEFS[winnerKey] ?? SPECIES_PATH_DEFS.nestling;
+  const size = profile?.size ?? 1;
+  const shoreReadiness = clamp(
+    0.18
+      + upgrades.legs * 0.22
+      + upgrades.tail * 0.13
+      + upgrades.spikes * 0.07
+      + upgrades.horns * 0.04
+      + Math.max(0, size - 0.94) * 0.18
+      + (winnerKey === "duneRunner" ? 0.08 : winnerKey === "basinBruiser" ? 0.06 : winnerKey === "waterGlider" ? -0.03 : 0),
+    0.12,
+    1,
+  );
+
+  let shoreLabel = "Water-bound";
+  let shoreSummary = "This body still belongs to the nursery waters.";
+  if (shoreReadiness >= 0.84) {
+    shoreLabel = "Land-forged";
+    shoreSummary = "This line can leave the water and stay efficient on hard ground.";
+  } else if (shoreReadiness >= SHORE_READY_THRESHOLD) {
+    shoreLabel = "Shore-ready";
+    shoreSummary = "This body can break onto land without losing its rhythm.";
+  } else if (shoreReadiness >= 0.38) {
+    shoreLabel = "Shore-soft";
+    shoreSummary = "This line can test the shoreline, but long land runs still cost momentum.";
+  }
+
+  return {
+    ...pathDef,
+    score: Number((winner?.[1] ?? 0).toFixed(2)),
+    shoreReadiness,
+    shoreLabel,
+    shoreSummary,
+  };
+}
+
 function computePlayerStats(upgrades, profile = null) {
   const size = profile?.size ?? 1;
   const mass = clamp(
@@ -564,6 +672,7 @@ function computePlayerStats(upgrades, profile = null) {
     1.7,
   );
   const momentumScale = Math.pow(mass, 0.72);
+  const path = computeSpeciesPath(upgrades, profile);
   return {
     speed: PLAYER_BASE_STATS.speed * (1 + upgrades.legs * 0.1),
     health: PLAYER_BASE_STATS.health + upgrades.spikes * 16,
@@ -584,6 +693,8 @@ function computePlayerStats(upgrades, profile = null) {
     collisionRadius: 1.7 * size + upgrades.spikes * 0.08,
     bodyPush: 3.8 + upgrades.tail * 0.65 + upgrades.horns * 0.35 + upgrades.spikes * 0.25,
     impactResist: 1 + upgrades.spikes * 0.14 + Math.max(0, size - 1) * 0.45,
+    path,
+    shoreReadiness: path.shoreReadiness,
   };
 }
 
@@ -1448,6 +1559,9 @@ export class SporeSliceGame {
         speedFactor: 1,
         traction: 1,
         dust: 0.4,
+        attackFactor: 1,
+        shoreReadiness: 0,
+        shoreStrain: 0,
       },
       isSprinting: false,
       sprintHudTimer: 0,
@@ -3329,6 +3443,7 @@ export class SporeSliceGame {
       const attackHudVisible = this.player.combatHudTimer > 0 || (Number.isFinite(closestThreat) && closestThreat < 11.5);
       const currentBiome = this.getCurrentBiome(playerPosition);
       const dominantBiome = BIOME_DEFS[this.saveData.biomeProgress.dominantBiome] ?? BIOME_DEFS.originWaters;
+      const activePath = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
       const nextBiomeUnlock = this.getNextBiomeUnlock();
       const nearbyFoods = sortByDistance(playerPosition, this.foods.filter((food) => food.active), (food, distance) => ({
         id: food.id,
@@ -3381,6 +3496,14 @@ export class SporeSliceGame {
           dominant: dominantBiome.label,
           unlockedBiomes: this.saveData.biomeProgress.unlockedBiomes.map((biomeKey) => BIOME_DEFS[biomeKey]?.label ?? biomeKey),
           nextUnlock: nextBiomeUnlock,
+        },
+        path: {
+          key: activePath.key,
+          label: activePath.label,
+          summary: activePath.summary,
+          favoredBiomes: activePath.favoredBiomes,
+          shoreLabel: activePath.shoreLabel,
+          shoreReadiness: Number((this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0).toFixed(2)),
         },
         editorOpen: this.state.editorOpen,
         editorTab: this.state.editorTab,
@@ -3448,6 +3571,9 @@ export class SporeSliceGame {
           terrainSlow: Number((1 - this.player.terrain.speedFactor).toFixed(2)),
           mass: Number(this.playerStats.mass.toFixed(2)),
           attackImpact: Number(this.player.attackImpact.toFixed(2)),
+          pathLabel: activePath.label,
+          shoreLabel: activePath.shoreLabel,
+          shoreReadiness: Number((this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0).toFixed(2)),
           identity: activeCreature ? buildCreatureIdentity(activeCreature.profile, activeCreature.traits) : buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
           stage: activeCreature ? describeCreatureStage(activeCreature.growth) : "Adult",
           stageLabel: activeMaturation?.label ?? `Fully Grown ${SPECIES_DISPLAY_NAME}`,
@@ -3494,6 +3620,8 @@ export class SporeSliceGame {
           identity: buildCreatureIdentity(draft.profile, draft.traits),
           modified: this.isDraftModified(),
           traits: draft.traits,
+          pathLabel: (computePlayerStats(draft.traits, draft.profile).path ?? SPECIES_PATH_DEFS.nestling).label,
+          shoreLabel: (computePlayerStats(draft.traits, draft.profile).path ?? SPECIES_PATH_DEFS.nestling).shoreLabel,
         },
         blueprints: blueprintEntries,
         speciesRelations: Object.entries(this.saveData.speciesRelations).map(([speciesId, relation]) => ({
@@ -4230,9 +4358,15 @@ export class SporeSliceGame {
       }
 
       const massRatio = clamp(this.playerStats.mass / Math.max(0.7, enemy.mass), 0.58, 1.65);
-      const impactStrength = (enemy.type === "predator" ? 5.6 : enemy.type === "herbivore" ? 8.8 : 7.9) * this.playerStats.knockback * massRatio;
+      const impactStrength = (enemy.type === "predator" ? 5.6 : enemy.type === "herbivore" ? 8.8 : 7.9)
+        * this.playerStats.knockback
+        * massRatio
+        * (this.player.terrain.attackFactor ?? 1);
       enemy.velocity.addScaledVector(vectorC.copy(forward), impactStrength / Math.max(0.85, enemy.mass));
-      this.player.impulseVelocity.addScaledVector(forward, this.playerStats.attackCarry * (enemy.type === "predator" ? 0.08 : 0.16));
+      this.player.impulseVelocity.addScaledVector(
+        forward,
+        this.playerStats.attackCarry * (this.player.terrain.attackFactor ?? 1) * (enemy.type === "predator" ? 0.08 : 0.16),
+      );
       if (enemy.type === "predator") {
         this.player.impulseVelocity.addScaledVector(forward, -enemy.mass * 0.16);
       }
@@ -5092,7 +5226,10 @@ export class SporeSliceGame {
         this.player.attackPhaseTimer = ATTACK_STRIKE_DURATION;
         this.player.attackLungeTimer = ATTACK_LUNGE_DURATION;
         this.player.moveVelocity.multiplyScalar(0.72);
-        this.player.impulseVelocity.addScaledVector(this.player.attackDirection, this.playerStats.attackDrive);
+        this.player.impulseVelocity.addScaledVector(
+          this.player.attackDirection,
+          this.playerStats.attackDrive * (this.player.terrain.attackFactor ?? 1),
+        );
         this.player.attackImpact = Math.max(this.player.attackImpact, 0.34);
         this.cameraFovKick = Math.max(this.cameraFovKick, 2.2);
         this.cameraShake = Math.max(this.cameraShake, 0.08);
@@ -5121,13 +5258,6 @@ export class SporeSliceGame {
     }
 
     const sprinting = !editorLocked && (this.input.sprint || this.virtualInput.sprint || this.gamepad.sprint) && moving && this.player.sprintCharge > 0.05;
-    if (sprinting) {
-      this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE);
-    } else {
-      const rechargeRate = this.state.zone === "nest" ? SPRINT_SAFE_RECHARGE_RATE : SPRINT_RECHARGE_RATE;
-      this.player.sprintCharge = clamp(this.player.sprintCharge + dt * rechargeRate * (1 + surgePower * FERAL_SURGE_RECOVERY_BONUS), 0, 1);
-    }
-
     const sprintBonus = sprinting ? SPRINT_SPEED_BONUS : 1;
     const attackMoveFactor = this.player.attackPhase === "windup"
       ? 0.42
@@ -5143,19 +5273,54 @@ export class SporeSliceGame {
         : vectorF.set(0, 0, 0);
     const terrainBiome = this.getCurrentBiome(this.player.group.position);
     const activeCreature = this.getActiveCreature();
+    const pathProfile = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
     const frontierUnlocked = this.isBiomeUnlocked(terrainBiome.key);
     sampleTerrainResponse(this.player.group.position, terrainDirection, this.player.terrain);
     this.player.terrain.biomeKey = terrainBiome.key;
     this.player.terrain.water = terrainBiome.water;
     const juvenileWaterBonus = terrainBiome.water && (activeCreature?.growth ?? 1) < 1 ? 1.14 : 1;
     const adultWaterPenalty = terrainBiome.water && (activeCreature?.growth ?? 1) >= 1 ? 0.9 : 1;
-    this.player.terrain.speedFactor = clamp(
-      this.player.terrain.speedFactor * (terrainBiome.speed ?? 1) * juvenileWaterBonus * adultWaterPenalty * (frontierUnlocked ? 1 : 0.94),
-      0.58,
-      1.16,
+    const pathSpeedFactor = pathProfile.biomeSpeed?.[terrainBiome.key] ?? 1;
+    const pathTractionFactor = pathProfile.biomeTraction?.[terrainBiome.key] ?? 1;
+    const pathTurnFactor = pathProfile.biomeTurn?.[terrainBiome.key] ?? 1;
+    const pathSprintDrain = pathProfile.biomeSprintDrain?.[terrainBiome.key] ?? 1;
+    const pathAttackFactor = pathProfile.biomeAttack?.[terrainBiome.key] ?? 1;
+    const growthReadiness = clamp(
+      (this.playerStats.shoreReadiness ?? 0)
+        + Math.max(0, (activeCreature?.growth ?? 1) - BABY_STAGE_THRESHOLD) * 0.52
+        + (terrainBiome.key === "sunlitShallows" ? 0.08 : 0),
+      0,
+      1,
     );
-    this.player.terrain.traction = clamp(this.player.terrain.traction * (terrainBiome.traction ?? 1), 0.56, 1);
-    this.player.terrain.dust = clamp(this.player.terrain.dust * (terrainBiome.dust ?? 1), 0.14, 1);
+    const shorelineStrain = terrainBiome.water ? 0 : clamp(1 - growthReadiness, 0, 1);
+    const shorelineSpeedPenalty = terrainBiome.water ? 1 : 1 - shorelineStrain * ((activeCreature?.growth ?? 1) < 1 ? 0.34 : 0.18);
+    const shorelineTractionPenalty = terrainBiome.water ? 1 : 1 - shorelineStrain * ((activeCreature?.growth ?? 1) < 1 ? 0.24 : 0.12);
+    this.player.terrain.shoreReadiness = growthReadiness;
+    this.player.terrain.shoreStrain = shorelineStrain;
+    this.player.terrain.attackFactor = pathAttackFactor * (terrainBiome.water ? 1 : 1 - shorelineStrain * 0.08);
+    this.player.terrain.speedFactor = clamp(
+      this.player.terrain.speedFactor
+        * (terrainBiome.speed ?? 1)
+        * juvenileWaterBonus
+        * adultWaterPenalty
+        * pathSpeedFactor
+        * shorelineSpeedPenalty
+        * (frontierUnlocked ? 1 : 0.94),
+      0.58,
+      1.24,
+    );
+    this.player.terrain.traction = clamp(
+      this.player.terrain.traction * (terrainBiome.traction ?? 1) * pathTractionFactor * shorelineTractionPenalty,
+      0.56,
+      1.18,
+    );
+    this.player.terrain.dust = clamp(this.player.terrain.dust * (terrainBiome.dust ?? 1) * (terrainBiome.water ? 0.94 : 1 + shorelineStrain * 0.18), 0.14, 1);
+    if (sprinting) {
+      this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE * pathSprintDrain * (1 + shorelineStrain * 0.44));
+    } else {
+      const rechargeRate = this.state.zone === "nest" ? SPRINT_SAFE_RECHARGE_RATE : SPRINT_RECHARGE_RATE;
+      this.player.sprintCharge = clamp(this.player.sprintCharge + dt * rechargeRate * (1 + surgePower * FERAL_SURGE_RECOVERY_BONUS), 0, 1);
+    }
     const desiredSpeed = moving
       ? this.playerStats.speed * sprintBonus * (1 + surgePower * FERAL_SURGE_SPEED_BONUS) * attackMoveFactor * this.player.terrain.speedFactor * targetSlowdown
       : 0;
@@ -5197,7 +5362,11 @@ export class SporeSliceGame {
           : desiredDirection;
       const desiredYaw = Math.atan2(yawSource.x, yawSource.z);
       const yawDelta = normalizeAngle(desiredYaw - this.player.yaw);
-      const maxTurn = this.playerStats.turnRate * (0.78 + speedRatio * 0.52) * (this.player.attackPhase === "strike" ? 0.62 : this.player.attackPhase === "windup" ? 0.82 : 1) * dt;
+      const maxTurn = this.playerStats.turnRate
+        * pathTurnFactor
+        * (0.78 + speedRatio * 0.52)
+        * (this.player.attackPhase === "strike" ? 0.62 : this.player.attackPhase === "windup" ? 0.82 : 1)
+        * dt;
       const appliedTurn = clamp(yawDelta, -maxTurn, maxTurn);
       this.player.yaw = normalizeAngle(this.player.yaw + appliedTurn);
       this.player.turnMomentum = damp(this.player.turnMomentum, appliedTurn / Math.max(0.0001, maxTurn), 10, dt);
@@ -5340,6 +5509,8 @@ export class SporeSliceGame {
     this.state.zone = getZoneName(this.player.group.position);
     const currentBiome = this.getCurrentBiome(this.player.group.position);
     const activeFrontier = this.isBiomeUnlocked(currentBiome.key);
+    const activePath = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
+    const shoreReadiness = this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0;
     this.currentBiome = currentBiome;
     this.state.biome = currentBiome.key;
 
@@ -5353,14 +5524,16 @@ export class SporeSliceGame {
       this.state.objective = "Jaw Basin: richer DNA and harder fights. Master it to turn the species into a war line.";
     } else if (!activeFrontier) {
       this.state.objective = `${currentBiome.label} is still a hard frontier. Grow the species or return to the nest before claiming it.`;
+    } else if (!currentBiome.water && shoreReadiness < SHORE_READY_THRESHOLD) {
+      this.state.objective = `${activePath.label}: this body is still shore-soft. Make brief land runs, then evolve cleaner shoreline anatomy at the nest.`;
     } else if (currentBiome.key === "originWaters") {
-      this.state.objective = "Origin Waters: feed safely, grow newborn mass quickly, then break for the shallows.";
+      this.state.objective = `${activePath.label}: feed safely in the origin waters until the line is ready to break for shore.`;
     } else if (currentBiome.key === "sunlitShallows") {
-      this.state.objective = "Sunlit Shallows: easy food and the first real step onto a wider biome route.";
+      this.state.objective = `${activePath.label}: Sunlit Shallows are the first shoreline test before committing to a land route.`;
     } else if (currentBiome.key === "glowMarsh") {
-      this.state.objective = "Glow Marsh: slower footing, calmer prey, and a softer path toward adaptive body plans.";
+      this.state.objective = `${activePath.label}: Glow Marsh rewards patient bodies that can hold momentum in soft ground.`;
     } else {
-      this.state.objective = "Bone Dunes: long hunts, exposed movement, and the main push toward land-dominant species.";
+      this.state.objective = `${activePath.label}: Bone Dunes reward bodies that can hold speed and survive long exposed hunts.`;
     }
   }
 
@@ -5693,6 +5866,8 @@ export class SporeSliceGame {
     const draftBaseCreature = this.getDraftBaseCreature();
     const draftModified = this.isDraftModified();
     const draftStats = computePlayerStats(draft.traits, draft.profile);
+    const activePath = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
+    const draftPath = draftStats.path ?? SPECIES_PATH_DEFS.nestling;
     const draftMaturityTarget = computeCreatureMaturityTarget(draft);
     const socialOpportunity = this.getSocialOpportunity();
     const upgradeEntries = UPGRADE_DEFS.map((upgrade) => {
@@ -5870,6 +6045,13 @@ export class SporeSliceGame {
       biomeUnlocked: this.isBiomeUnlocked(currentBiome.key),
       dominantBiomeName: dominantBiome.label,
       dominantBiomeSummary: dominantBiome.summary,
+      pathLabel: activePath.label,
+      pathShortLabel: activePath.shortLabel,
+      pathSummary: activePath.summary,
+      pathFavoredBiomes: activePath.favoredBiomes,
+      shoreLabel: activePath.shoreLabel,
+      shoreReadiness: Math.round((this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0) * 100),
+      shoreSummary: activePath.shoreSummary,
       unlockedBiomes: unlockedBiomeEntries.map((biome) => ({
         key: biome.key,
         label: biome.label,
@@ -5986,6 +6168,9 @@ export class SporeSliceGame {
             sizeScale: Number(activeRuntime.sizeScale.toFixed(3)),
             killCount: activeCreature.killCount,
             activeTime: Number(activeCreature.activeTime.toFixed(1)),
+            pathLabel: activePath.label,
+            pathSummary: activePath.summary,
+            shoreLabel: activePath.shoreLabel,
           }
         : null,
       evolutionDraft: {
@@ -5999,6 +6184,10 @@ export class SporeSliceGame {
         },
         traitTotal: Math.round(getTraitTotal(draft.traits)),
         maturityTarget: draftMaturityTarget,
+        pathLabel: draftPath.label,
+        pathSummary: draftPath.summary,
+        shoreLabel: draftPath.shoreLabel,
+        favoredBiomes: draftPath.favoredBiomes,
       },
       controlsHint: this.gamepad.connected
         ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor. Keyboard Q/E/R sends social signals."

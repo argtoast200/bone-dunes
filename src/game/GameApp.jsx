@@ -37,6 +37,13 @@ const initialState = {
   biomeUnlocked: true,
   dominantBiomeName: "Origin Waters",
   dominantBiomeSummary: "Universal cradle water. Newborn bodies grow fastest here.",
+  pathLabel: "Nursery Drifter",
+  pathShortLabel: "Drifter",
+  pathSummary: "Soft-bodied swimmer still learning whether the line belongs in water or on land.",
+  pathFavoredBiomes: ["Origin Waters", "Sunlit Shallows"],
+  shoreLabel: "Water-bound",
+  shoreReadiness: 24,
+  shoreSummary: "This body still belongs to the nursery waters.",
   unlockedBiomes: [
     { key: "originWaters", label: "Origin Waters", shortLabel: "Origin" },
     { key: "sunlitShallows", label: "Sunlit Shallows", shortLabel: "Shallows" },
@@ -105,6 +112,10 @@ const initialState = {
     },
     traitTotal: 0,
     maturityTarget: 26,
+    pathLabel: "Nursery Drifter",
+    pathSummary: "Soft-bodied swimmer still learning whether the line belongs in water or on land.",
+    shoreLabel: "Water-bound",
+    favoredBiomes: ["Origin Waters", "Sunlit Shallows"],
   },
   traitStats: [],
   lastEvolution: null,
@@ -327,6 +338,8 @@ export function GameApp() {
     contextPrompt = `${socialHint.speciesName} recognize your line. Use the opening to gather DNA or pass through their territory.`;
   } else if (!uiState.biomeUnlocked && uiState.zone !== "nest") {
     contextPrompt = `${uiState.biomeName} is still a hard frontier. Return stronger before trying to claim it for the species.`;
+  } else if (uiState.biomeKey !== "originWaters" && uiState.biomeKey !== "sunlitShallows" && uiState.shoreReadiness < 58 && !uiState.canOpenEditor) {
+    contextPrompt = `${uiState.pathLabel} is still shore-soft. Make shorter land runs, then evolve cleaner shoreline anatomy at the nest.`;
   } else if (uiState.biomeKey === "originWaters" && activeCreature && activeCreature.maturityPct < 100) {
     contextPrompt = "Origin waters accelerate newborn growth. Feed with the tide skimmers here before pushing into harder frontiers.";
   } else if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
@@ -421,9 +434,17 @@ export function GameApp() {
                       {uiState.biomeName}
                     </span>
                     <span className="context-chip">
+                      Path
+                      {" "}
+                      {uiState.pathShortLabel}
+                    </span>
+                    <span className="context-chip">
                       Dominant
                       {" "}
                       {uiState.dominantBiomeName}
+                    </span>
+                    <span className={`context-chip ${uiState.shoreReadiness >= 58 ? "friendly" : "hostile"}`}>
+                      {uiState.shoreLabel}
                     </span>
                     {uiState.nextBiomeUnlock && (
                       <span className="context-chip">
@@ -605,7 +626,13 @@ export function GameApp() {
                           {activeCreature?.maturityPct ?? 100}
                           % grown
                         </small>
-                        <p>This is the body currently carrying the line through the dunes.</p>
+                        <p>
+                          {uiState.pathLabel}
+                          {" • "}
+                          {uiState.shoreLabel}
+                          {" • "}
+                          {uiState.pathSummary}
+                        </p>
                       </div>
 
                       <div className="editor-preview-panel next">
@@ -616,7 +643,13 @@ export function GameApp() {
                           {" "}
                           {draftBaseIdentity}
                         </small>
-                        <p>{uiState.evolutionDraft?.modified ? "Ready to lay from the Species tab." : "Spend DNA to start branching a new body."}</p>
+                        <p>
+                          {uiState.evolutionDraft?.pathLabel}
+                          {" • "}
+                          {uiState.evolutionDraft?.shoreLabel}
+                          {" • "}
+                          {uiState.evolutionDraft?.modified ? "Ready to lay from the Species tab." : "Spend DNA to start branching a new body."}
+                        </p>
                       </div>
                     </div>
 
@@ -653,7 +686,13 @@ export function GameApp() {
                       <div>
                         <span className="upgrade-slot">Frontiers</span>
                         <strong>{uiState.dominantBiomeName}</strong>
-                        <small>{uiState.dominantBiomeSummary}</small>
+                        <small>
+                          {uiState.dominantBiomeSummary}
+                          {" • "}
+                          {uiState.pathLabel}
+                          {" • "}
+                          {uiState.shoreLabel}
+                        </small>
                       </div>
                       <div className="species-relation-row frontier-pill-row">
                         {uiState.unlockedBiomes.map((biome) => (
