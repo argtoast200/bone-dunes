@@ -218,6 +218,7 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
   - bite phases existed, but the strike body motion and forward drive were still too light
   - hits applied damage cleanly but momentum transfer between bodies was still too small
   - camera and terrain were adding readability but not enough physical reinforcement
+
 - Implemented in `src/game/SporeSliceGame.js`:
   - split player motion into controlled movement velocity plus decaying impulse velocity for heavier starts, stops, and hit carry
   - added mass-aware movement stats, move-target slowdown, lighter coasting than a hard snap-stop, and turn-rate limits tied to creature mass
@@ -246,6 +247,27 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no physics engine, combo tree, or combat-system rewrite
   - no save/progression changes beyond using existing stats to derive movement mass
+
+## 2026-03-07 Xbox View Button Evolution Pass
+
+- Current request: make the Xbox controller `Select/View` button open the `Creature Evolution` menu, but only while the player is in the species nest.
+- Implemented:
+  - remapped the controller nest/editor action from `Start` to `View/Select` (button `8`) in `src/game/SporeSliceGame.js`
+  - kept `Start` as a menu-start button only, so it no longer opens the nest editor during live play
+  - made `View/Select` force the `Creature Evolution` tab if the nest editor is already open, instead of leaving the player on `Species`
+  - updated controller-facing HUD/control copy in `src/game/GameApp.jsx` and `src/game/SporeSliceGame.js` so the on-screen mapping matches the new behavior
+- Validation:
+  - `npm run build` passes
+  - shared client screenshot/state captured at `output/web-game/gamepad-select-pass`
+  - visual inspection confirmed the local build renders cleanly after the controller mapping change
+  - deterministic browser checks with `window.__setTestGamepadState(...)` confirmed:
+    - `View/Select` in the dunes does not open the editor
+    - moving the body into the nest and pressing `View/Select` opens the editor on the `Creature Evolution` tab
+    - if the editor is already open on `Species`, pressing `View/Select` switches back to `Creature Evolution`
+    - browser console reported `0` errors
+- Scope protected:
+  - no controller camera rewrite
+  - no change to keyboard/mouse or combat controls
 
 ## 2026-03-07 Evolution-Core Species Nest Pass
 

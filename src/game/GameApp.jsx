@@ -328,7 +328,7 @@ export function GameApp() {
       .filter(Boolean),
   }));
   const liveControls = uiState.gamepadConnected
-    ? "A or RT bite • B or LB sprint • Start opens the nest • Q/E/R social on keyboard"
+    ? "A or RT bite • B or LB sprint • View opens Creature Evolution at the nest • Q/E/R social on keyboard"
     : "Shift sprint • Q/E/R social • Space or right click bite • F fullscreen";
 
   let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";

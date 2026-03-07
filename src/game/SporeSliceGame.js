@@ -1371,9 +1371,11 @@ export class SporeSliceGame {
       attackHeld: false,
       attackPressed: false,
       startPressed: false,
+      selectPressed: false,
       fullscreenPressed: false,
       prevAttackHeld: false,
       prevStartHeld: false,
+      prevSelectHeld: false,
       prevFullscreenHeld: false,
     };
     this.gamepadTestState = null;
@@ -3061,7 +3063,7 @@ export class SporeSliceGame {
     this.gamepad.label = pad.id || "Controller";
     this.state.message = this.state.mode === "menu"
       ? "Controller ready. Press A or Start to begin the hunt."
-      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites.`;
+      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, and View opens evolution at the nest.`;
     this.emitState();
   }
 
@@ -3081,6 +3083,7 @@ export class SporeSliceGame {
     this.gamepad.attackHeld = false;
     this.gamepad.prevAttackHeld = false;
     this.gamepad.prevStartHeld = false;
+    this.gamepad.prevSelectHeld = false;
     this.gamepad.prevFullscreenHeld = false;
     this.emitState();
   }
@@ -3134,7 +3137,7 @@ export class SporeSliceGame {
       this.gamepad.index = pad.index;
       this.gamepad.label = pad.id || "Controller";
       if (this.state.mode !== "menu") {
-        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites.`;
+        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, and View opens evolution at the nest.`;
       }
     }
 
@@ -3151,6 +3154,7 @@ export class SporeSliceGame {
     const sprintHeld = buttonPressed(1) || buttonPressed(4) || buttonPressed(10);
     const attackHeld = buttonPressed(0) || buttonPressed(2) || buttonPressed(5) || buttonPressed(7);
     const startHeld = buttonPressed(9);
+    const selectHeld = buttonPressed(8);
     const fullscreenHeld = buttonPressed(3);
 
     this.gamepad.moveX = moveX;
@@ -3161,6 +3165,7 @@ export class SporeSliceGame {
     this.gamepad.attackHeld = attackHeld;
     this.gamepad.attackPressed = attackHeld && !this.gamepad.prevAttackHeld;
     this.gamepad.startPressed = startHeld && !this.gamepad.prevStartHeld;
+    this.gamepad.selectPressed = selectHeld && !this.gamepad.prevSelectHeld;
     this.gamepad.fullscreenPressed = fullscreenHeld && !this.gamepad.prevFullscreenHeld;
 
     if ((Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05) && !this.state.editorOpen) {
@@ -3178,8 +3183,14 @@ export class SporeSliceGame {
     if (this.gamepad.startPressed) {
       if (this.state.mode === "menu") {
         this.startGame();
+      }
+    }
+
+    if (this.gamepad.selectPressed) {
+      if (this.state.editorOpen) {
+        this.setEditorTab("evolution");
       } else if (this.state.zone === "nest" && this.state.respawnTimer <= 0) {
-        this.toggleEditor();
+        this.toggleEditor(true);
       }
     }
 
@@ -3189,6 +3200,7 @@ export class SporeSliceGame {
 
     this.gamepad.prevAttackHeld = attackHeld;
     this.gamepad.prevStartHeld = startHeld;
+    this.gamepad.prevSelectHeld = selectHeld;
     this.gamepad.prevFullscreenHeld = fullscreenHeld;
   }
 
@@ -6190,7 +6202,7 @@ export class SporeSliceGame {
         favoredBiomes: draftPath.favoredBiomes,
       },
       controlsHint: this.gamepad.connected
-        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor. Keyboard Q/E/R sends social signals."
+        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, View opens Creature Evolution at the nest. Keyboard Q/E/R sends social signals."
         : this.state.mode === "menu"
           ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve the next water-born body"
         : this.state.editorOpen
