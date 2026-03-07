@@ -30,6 +30,13 @@ const SPRINT_RECHARGE_RATE = 0.32;
 const SPRINT_SAFE_RECHARGE_RATE = 0.6;
 const DANGER_REWARD_MULTIPLIER = 1.35;
 const LOW_HEALTH_THRESHOLD = 0.38;
+const FERAL_SURGE_MAX_TIMER = 8;
+const FERAL_SURGE_SPEED_BONUS = 0.07;
+const FERAL_SURGE_COOLDOWN_BONUS = 0.22;
+const FERAL_SURGE_RECOVERY_BONUS = 0.18;
+const IMPACT_SLOW_DURATION = 0.07;
+const KILL_IMPACT_SLOW_DURATION = 0.11;
+const CAMERA_FOV_KICK_DECAY = 7.5;
 const EFFECT_RING_GEOMETRY = new THREE.RingGeometry(0.34, 0.62, 18);
 const EFFECT_SHARD_GEOMETRY = new THREE.OctahedronGeometry(0.18, 0);
 const BLOCKED_BROWSER_KEYS = new Set([
@@ -283,6 +290,7 @@ function createEnemy(type) {
     circleSign: Math.random() < 0.5 ? -1 : 1,
     bob: Math.random() * Math.PI * 2,
     hitFlash: 0,
+    impactPulse: 0,
     threatGlow: 0,
   };
 }
@@ -393,8 +401,16 @@ export class SporeSliceGame {
     };
     this.effects = [];
     this.cameraShake = 0;
+    this.cameraBaseFov = 60;
+    this.cameraFovKick = 0;
+    this.impactSlow = 0;
     this.zoneTransition = 0;
     this.lastZone = this.state.zone;
+    this.surge = {
+      timer: 0,
+      level: 0,
+      pulse: 0,
+    };
     this.runStats = {
       sessionDna: 0,
       scavengersDefeated: 0,
@@ -501,6 +517,7 @@ export class SporeSliceGame {
       invulnerability: 0,
       hurtTint: 0,
       pickupPulse: 0,
+      attackRecoil: 0,
       stepCycle: 0,
       attackSwingId: 0,
       groundMarker,
@@ -690,6 +707,7 @@ export class SporeSliceGame {
   startGame() {
     if (this.state.mode === "menu") {
       this.state.mode = "playing";
+      this.clearFeralSurge();
       this.state.message = this.state.hasSave
         ? "The dunes remember you. Hunt, gather DNA, then return home to evolve."
         : "Food glows across the dunes. Bring DNA home before the predators close in.";
@@ -924,6 +942,8 @@ export class SporeSliceGame {
           attackReady: this.player.attackCooldown <= 0,
           biteCooldownPct: Number((1 - this.player.attackCooldown / Math.max(0.01, this.playerStats.biteCooldown)).toFixed(2)),
           sprintCharge: Number(this.player.sprintCharge.toFixed(2)),
+          surgeCharge: Number((this.surge.timer / FERAL_SURGE_MAX_TIMER).toFixed(2)),
+          surgeLevel: this.surge.level,
           sprinting: this.input.sprint,
         },
         moveTarget: this.moveTarget.active
@@ -984,6 +1004,35 @@ export class SporeSliceGame {
     }
   }
 
+  setImpactPause(duration, fovKick = 0, shake = 0) {
+    this.impactSlow = Math.max(this.impactSlow, duration);
+    this.cameraFovKick = Math.max(this.cameraFovKick, fovKick);
+    if (shake > 0) {
+      this.cameraShake = Math.max(this.cameraShake, shake);
+    }
+  }
+
+  clearFeralSurge() {
+    this.surge.timer = 0;
+    this.surge.level = 0;
+    this.surge.pulse = 0;
+  }
+
+  grantFeralSurge(levelGain = 0, duration = 2.2) {
+    const wasActive = this.surge.timer > 0.8;
+    if (wasActive) {
+      if (levelGain > 0) {
+        this.surge.level = clamp(this.surge.level + levelGain, 1, 3);
+      }
+    } else {
+      this.surge.level = clamp(Math.max(1, levelGain), 1, 3);
+    }
+
+    this.surge.timer = clamp(this.surge.timer + duration, 0, FERAL_SURGE_MAX_TIMER);
+    this.surge.pulse = 1;
+    return this.surge.level;
+  }
+
   awardDNA(amount, message, options = {}) {
     const source = options.source ?? "food";
     const rewardMultiplier = this.state.zone === "danger" ? DANGER_REWARD_MULTIPLIER : 1;
@@ -991,16 +1040,22 @@ export class SporeSliceGame {
     this.state.dna += reward;
     this.state.hasSave = true;
     this.runStats.sessionDna += reward;
-    this.updateRunScore();
-    this.state.message = reward > amount
-      ? `${message} Danger surge: +${reward - amount} bonus DNA.`
-      : message;
     if (source === "predator") {
       this.runStats.predatorsDefeated += 1;
     } else if (source === "scavenger") {
       this.runStats.scavengersDefeated += 1;
     }
-    this.runStats.summary = `Run score ${this.runStats.score}. ${this.runStats.sessionDna} DNA gathered this hunt.`;
+    const surgeLevel = this.grantFeralSurge(
+      source === "predator" ? 2 : source === "scavenger" || source === "rareFood" ? 1 : 0,
+      source === "predator" ? 4.6 : source === "scavenger" ? 3.5 : source === "rareFood" ? 3.8 : 2.1,
+    );
+    this.updateRunScore();
+    this.state.message = reward > amount
+      ? `${message} Danger surge: +${reward - amount} bonus DNA. Feral surge x${surgeLevel}.`
+      : `${message} Feral surge x${surgeLevel}.`;
+    this.runStats.summary = this.surge.timer > 0.2
+      ? `Run score ${this.runStats.score}. ${this.runStats.sessionDna} DNA gathered this hunt. Feral surge x${this.surge.level} is live.`
+      : `Run score ${this.runStats.score}. ${this.runStats.sessionDna} DNA gathered this hunt.`;
     if (options.position) {
       this.spawnBurst(options.position, {
         color: reward > amount ? 0xff9b70 : 0x73ffe5,
@@ -1061,6 +1116,7 @@ export class SporeSliceGame {
       bestRun: 0,
       summary: "Fresh hatchling. No hunts logged yet.",
     };
+    this.clearFeralSurge();
     this.updatePlayerStats();
     this.applyUpgradeVisuals();
     this.resetPlayerToNest(true);
@@ -1088,6 +1144,11 @@ export class SporeSliceGame {
     this.player.invulnerability = 1.2;
     this.player.hurtTint = 0;
     this.player.pickupPulse = 0;
+    this.player.attackRecoil = 0;
+    this.player.group.scale.set(1, 1, 1);
+    this.clearFeralSurge();
+    this.impactSlow = 0;
+    this.cameraFovKick = 0;
     this.clearMoveTarget();
 
     if (resettingAfterDeath) {
@@ -1108,7 +1169,9 @@ export class SporeSliceGame {
     enemy.cooldown = 0.8;
     enemy.state = "idle";
     enemy.attackTelegraph = 0;
+    enemy.impactPulse = 0;
     enemy.threatGlow = 0;
+    enemy.group.scale.set(1, 1, 1);
     enemy.group.visible = true;
     const offset = getSpawnOffset(enemy.type === "predator" ? 3.8 : 3.2);
     const x = clamp(enemy.spawn.x + offset.x, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
@@ -1126,7 +1189,9 @@ export class SporeSliceGame {
     this.player.health = Math.max(0, this.player.health - amount);
     this.player.invulnerability = 0.65;
     this.player.hurtTint = 0.9;
+    this.player.attackRecoil = Math.max(this.player.attackRecoil, this.player.health > 0 ? 0.56 : 0.9);
     this.player.velocity.addScaledVector(sourceDirection, 4.8);
+    this.setImpactPause(this.player.health > 0 ? 0.08 : 0.12, this.player.health > 0 ? 2.6 : 4.8);
     this.cameraShake = Math.max(this.cameraShake, this.player.health > 0 ? 0.18 : 0.34);
     this.spawnBurst(this.player.group.position, {
       color: this.player.health > 0 ? 0xff8b72 : 0xff4f3a,
@@ -1143,6 +1208,7 @@ export class SporeSliceGame {
       const dnaLoss = Math.min(this.state.dna, 8);
       this.state.dna -= dnaLoss;
       this.updateRunScore();
+      this.clearFeralSurge();
       this.runStats.summary = `Run score ${this.runStats.score}. ${this.runStats.predatorsDefeated} predators and ${this.runStats.scavengersDefeated} scavengers brought down.`;
       this.persistProgress();
       this.state.message = dnaLoss > 0
@@ -1158,8 +1224,15 @@ export class SporeSliceGame {
 
     enemy.hp = Math.max(0, enemy.hp - amount);
     enemy.hitFlash = 0.36;
+    enemy.impactPulse = enemy.hp <= 0 ? 1 : 0.82;
     enemy.threatGlow = 1;
     enemy.state = "threatened";
+    this.player.attackRecoil = Math.max(this.player.attackRecoil, enemy.hp <= 0 ? 1 : 0.7);
+    this.setImpactPause(
+      enemy.hp <= 0 ? KILL_IMPACT_SLOW_DURATION : IMPACT_SLOW_DURATION,
+      enemy.hp <= 0 ? 5.4 : 3.2,
+      enemy.type === "predator" ? 0.18 : 0.1,
+    );
     this.cameraShake = Math.max(this.cameraShake, enemy.type === "predator" ? 0.16 : 0.09);
     this.spawnBurst(enemy.group.position, {
       color: enemy.type === "predator" ? 0xff9b70 : 0xffe2b1,
@@ -1224,6 +1297,8 @@ export class SporeSliceGame {
     this.player.attackTimer = ATTACK_DURATION;
     this.player.attackCooldown = this.playerStats.biteCooldown;
     this.player.attackLungeTimer = ATTACK_LUNGE_DURATION;
+    this.player.attackRecoil = Math.max(this.player.attackRecoil, 0.7);
+    this.cameraFovKick = Math.max(this.cameraFovKick, 1.8);
     this.player.attackSwingId += 1;
 
     const lockedTarget = this.findAttackTarget();
@@ -1237,6 +1312,13 @@ export class SporeSliceGame {
 
     const forward = vectorD.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
     const playerPosition = this.player.group.position;
+    this.spawnBurst(playerPosition.clone().addScaledVector(forward, 1.85), {
+      color: 0xffcb8f,
+      ttl: 0.22,
+      size: 0.68,
+      shards: 4,
+      rise: 0.14,
+    });
 
     this.enemies.forEach((enemy) => {
       if (enemy.deadTimer > 0) {
@@ -1311,6 +1393,7 @@ export class SporeSliceGame {
 
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.hitFlash = Math.max(0, enemy.hitFlash - dt);
+      enemy.impactPulse = Math.max(0, enemy.impactPulse - dt * 3.4);
       enemy.threatGlow = Math.max(0, enemy.threatGlow - dt * 2.5);
       enemy.bob += dt * (enemy.type === "predator" ? 7 : 5.5);
 
@@ -1437,6 +1520,11 @@ export class SporeSliceGame {
       );
       enemy.refs.body.material.emissiveIntensity = enemy.hitFlash * 0.9 + telegraphStrength * 1.1 + enemy.threatGlow * 0.22;
       enemy.refs.back.material.emissiveIntensity = telegraphStrength * 0.85 + enemy.threatGlow * 0.2;
+      enemy.group.scale.set(
+        1 + enemy.impactPulse * 0.08,
+        1 - enemy.impactPulse * 0.06,
+        1 + enemy.impactPulse * 0.14,
+      );
     });
   }
 
@@ -1453,7 +1541,16 @@ export class SporeSliceGame {
       return;
     }
 
+    this.surge.timer = Math.max(0, this.surge.timer - dt * (this.state.zone === "danger" ? 0.9 : 1.08));
+    this.surge.pulse = Math.max(0, this.surge.pulse - dt * 1.9);
+    if (this.surge.timer <= 0.001) {
+      this.surge.level = 0;
+      this.surge.pulse = 0;
+    }
+
     this.runStats.timeAlive += dt;
+    const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
+    const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
 
     const moveForward = Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
     const moveStrafe = Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
@@ -1492,11 +1589,11 @@ export class SporeSliceGame {
       this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE);
     } else {
       const rechargeRate = this.state.zone === "nest" ? SPRINT_SAFE_RECHARGE_RATE : SPRINT_RECHARGE_RATE;
-      this.player.sprintCharge = clamp(this.player.sprintCharge + dt * rechargeRate, 0, 1);
+      this.player.sprintCharge = clamp(this.player.sprintCharge + dt * rechargeRate * (1 + surgePower * FERAL_SURGE_RECOVERY_BONUS), 0, 1);
     }
 
     const sprintBonus = sprinting ? SPRINT_SPEED_BONUS : 1;
-    const desiredSpeed = moving ? this.playerStats.speed * sprintBonus : 0;
+    const desiredSpeed = moving ? this.playerStats.speed * sprintBonus * (1 + surgePower * FERAL_SURGE_SPEED_BONUS) : 0;
     const desiredVelocity = vectorD.copy(desiredDirection).multiplyScalar(desiredSpeed);
 
     this.player.attackLungeTimer = Math.max(0, this.player.attackLungeTimer - dt);
@@ -1517,7 +1614,7 @@ export class SporeSliceGame {
     this.player.group.position.addScaledVector(this.player.velocity, dt);
     this.player.group.position.x = clamp(this.player.group.position.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
     this.player.group.position.z = clamp(this.player.group.position.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
-    this.player.group.position.y = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT;
+    this.player.group.position.y = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
     this.player.group.rotation.y = this.player.yaw;
 
     this.player.stepCycle += this.player.velocity.length() * dt * 0.7;
@@ -1527,10 +1624,11 @@ export class SporeSliceGame {
     });
 
     this.player.attackTimer = Math.max(0, this.player.attackTimer - dt);
-    this.player.attackCooldown = Math.max(0, this.player.attackCooldown - dt);
+    this.player.attackCooldown = Math.max(0, this.player.attackCooldown - dt * (1 + surgePower * FERAL_SURGE_COOLDOWN_BONUS));
     this.player.invulnerability = Math.max(0, this.player.invulnerability - dt);
     this.player.hurtTint = Math.max(0, this.player.hurtTint - dt * 1.6);
     this.player.pickupPulse = Math.max(0, this.player.pickupPulse - dt * 2.4);
+    this.player.attackRecoil = Math.max(0, this.player.attackRecoil - dt * 4.8);
 
     if (this.input.attackQueued) {
       this.triggerAttack();
@@ -1539,16 +1637,29 @@ export class SporeSliceGame {
 
     const jawOpen = this.player.attackTimer > 0 ? Math.sin((this.player.attackTimer / ATTACK_DURATION) * Math.PI) : 0;
     const speedRatio = clamp(this.player.velocity.length() / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
-    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.48;
-    this.player.refs.headPivot.rotation.x = jawOpen * -0.18 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.05;
-    this.player.refs.tail.rotation.x = -Math.PI * 0.55 + Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.1 + speedRatio * 0.08;
-    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + jawOpen * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08;
+    const biteSnap = jawOpen + this.player.attackRecoil * 0.9;
+    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.6 + this.player.attackRecoil * 0.14;
+    this.player.refs.headPivot.rotation.x = jawOpen * -0.26 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.05 - this.player.attackRecoil * 0.15;
+    this.player.refs.tail.rotation.x = -Math.PI * 0.55 + Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.12 + speedRatio * 0.08 + surgeCharge * 0.08;
+    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16;
     this.player.groundMarker.rotation.z += dt * (0.35 + speedRatio * 0.6);
-    this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12);
+    this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12 + surgeCharge * 0.14);
 
     const tintStrength = this.player.hurtTint;
-    this.player.refs.body.material.emissive.setRGB(tintStrength * 0.5, tintStrength * 0.1, tintStrength * 0.08);
-    this.player.refs.body.material.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2;
+    const feralGlow = surgeCharge * (0.45 + surgePower * 0.08);
+    const baseBackGlow = 0.08 + (this.state.upgrades.cooldown ?? 0) * 0.08 + (this.state.upgrades.crest ?? 0) * 0.25;
+    this.player.refs.body.material.emissive.setRGB(
+      tintStrength * 0.5 + feralGlow * 0.12,
+      tintStrength * 0.1 + feralGlow * 0.42,
+      tintStrength * 0.08 + feralGlow * 0.28,
+    );
+    this.player.refs.body.material.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2 + feralGlow * 0.55;
+    this.player.refs.back.material.emissiveIntensity = baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08;
+    this.player.group.scale.set(
+      1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02,
+      1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02,
+      1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03,
+    );
 
     this.state.zone = getZoneName(this.player.group.position);
 
@@ -1566,6 +1677,8 @@ export class SporeSliceGame {
     const focus = this.player.group.position;
     const heading = this.player.yaw;
     const speedFactor = clamp(this.player.velocity.length() / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
+    const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
+    const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
     const forwardOffset = vectorA.copy(this.player.velocity).multiplyScalar(CAMERA_LOOKAHEAD);
     const sideOffset = vectorB.set(Math.cos(heading), 0, -Math.sin(heading)).multiplyScalar(CAMERA_SIDE_OFFSET + speedFactor * 0.25);
 
@@ -1586,7 +1699,13 @@ export class SporeSliceGame {
       this.cameraTarget.y += 0.12;
     }
 
+    if (surgePower > 0) {
+      this.cameraGoal.y += surgeCharge * 0.25;
+      this.cameraTarget.y += surgeCharge * 0.08;
+    }
+
     this.cameraShake = Math.max(0, this.cameraShake - dt * 2.8);
+    this.cameraFovKick = Math.max(0, this.cameraFovKick - dt * CAMERA_FOV_KICK_DECAY);
     if (this.cameraShake > 0.001) {
       this.cameraGoal.x += (Math.random() - 0.5) * this.cameraShake;
       this.cameraGoal.y += (Math.random() - 0.5) * this.cameraShake * 0.75;
@@ -1594,6 +1713,8 @@ export class SporeSliceGame {
     }
 
     dampVector(this.camera.position, this.cameraGoal, 5, dt);
+    this.camera.fov = damp(this.camera.fov, this.cameraBaseFov + this.cameraFovKick + speedFactor * 1.1 + surgeCharge * surgePower * 0.8, 8, dt);
+    this.camera.updateProjectionMatrix();
     this.camera.lookAt(this.cameraTarget);
   }
 
@@ -1629,6 +1750,32 @@ export class SporeSliceGame {
         }
         positions.needsUpdate = true;
         cloud.rotation.y += dt * (cloudIndex === 0 ? 0.01 : -0.016);
+      });
+    }
+
+    if (this.world.sunHalo) {
+      this.world.sunHalo.rotation.z += dt * 0.012;
+      this.world.sunHalo.children.forEach((layer, index) => {
+        layer.material.opacity = (index === 0 ? 0.18 : 0.1) + Math.sin(this.elapsed * (0.35 + index * 0.18)) * 0.02;
+      });
+    }
+    if (this.world.skyFlocks) {
+      this.world.skyFlocks.forEach((flock, flockIndex) => {
+        flock.birds.forEach((bird, birdIndex) => {
+          const phase = this.elapsed * bird.userData.speed + bird.userData.angle;
+          bird.position.set(
+            Math.cos(phase) * bird.userData.radius,
+            bird.userData.height + Math.sin(this.elapsed * 0.7 + bird.userData.phase) * 0.6,
+            Math.sin(phase) * bird.userData.radius * bird.userData.depth,
+          );
+          bird.rotation.y = -phase + Math.PI * 0.5;
+          const flap = Math.sin(this.elapsed * (5.5 + flockIndex) + bird.userData.phase) * 0.22;
+          bird.children[0].rotation.z = 0.4 + flap;
+          bird.children[1].rotation.z = -0.4 - flap;
+          bird.children[0].rotation.y = birdIndex % 2 === 0 ? 0.08 : -0.08;
+          bird.children[1].rotation.y = birdIndex % 2 === 0 ? -0.08 : 0.08;
+        });
+        flock.group.rotation.y += dt * flock.speed;
       });
     }
 
@@ -1699,10 +1846,12 @@ export class SporeSliceGame {
 
   update(dt) {
     this.elapsed += dt;
+    const simDt = dt * (this.impactSlow > 0 ? 0.24 : 1);
+    this.impactSlow = Math.max(0, this.impactSlow - dt);
     this.updateAmbient(dt);
-    this.updatePlayer(dt);
-    this.updateFood(dt);
-    this.updateEnemies(dt);
+    this.updatePlayer(simDt);
+    this.updateFood(simDt);
+    this.updateEnemies(simDt);
     this.updateCamera(dt);
     this.updateEffects(dt);
     this.updateMoveTargetMarker(dt);
@@ -1723,7 +1872,9 @@ export class SporeSliceGame {
       this.zoneTransition = Math.max(0, this.zoneTransition - dt * 1.5);
     }
 
-    if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
+    if (this.state.mode === "playing" && this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
+      this.state.message = `Feral surge x${this.surge.level}. Keep feeding it with blooms or kills before it burns out.`;
+    } else if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
       this.state.message = "The air thickens with heat. Better rewards, worse odds.";
     } else if (this.state.mode === "playing" && this.state.zone === "nest" && this.elapsed % 10 < dt) {
       this.state.message = "The nest hums softly. Evolve while the predators keep their distance.";
@@ -1781,7 +1932,9 @@ export class SporeSliceGame {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
       sprintCharge: this.player.sprintCharge,
-      biteCharge: 1 - this.player.attackCooldown / Math.max(0.01, this.playerStats.biteCooldown),
+      biteCharge: clamp(1 - this.player.attackCooldown / Math.max(0.01, this.playerStats.biteCooldown), 0, 1),
+      surgeCharge: clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1),
+      surgeLevel: this.surge.level,
       lowHealth: this.player.health <= this.player.maxHealth * LOW_HEALTH_THRESHOLD,
       dangerBoost: this.state.zone === "danger" ? DANGER_REWARD_MULTIPLIER : 1,
       threatDistance: Number.isFinite(closestThreat) ? closestThreat : null,

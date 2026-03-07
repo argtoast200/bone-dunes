@@ -18,6 +18,8 @@ const initialState = {
   maxHealth: 120,
   sprintCharge: 1,
   biteCharge: 1,
+  surgeCharge: 0,
+  surgeLevel: 0,
   lowHealth: false,
   dangerBoost: 1,
   threatDistance: null,
@@ -75,10 +77,13 @@ export function GameApp() {
 
   const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated;
   const zoneTitle = uiState.zone === "nest" ? "Safe Nest" : uiState.zone === "danger" ? "Predator Territory" : "Open Dunes";
-  const alertTone = uiState.lowHealth ? "warning" : uiState.zone === "danger" ? "danger" : "calm";
-  const alertTitle = uiState.lowHealth ? "Fracture Alert" : uiState.zone === "danger" ? "Apex Bonus Live" : "Quiet Window";
+  const surgeActive = uiState.surgeCharge > 0.05;
+  const alertTone = uiState.lowHealth ? "warning" : surgeActive ? "surge" : uiState.zone === "danger" ? "danger" : "calm";
+  const alertTitle = uiState.lowHealth ? "Fracture Alert" : surgeActive ? `Feral Surge x${uiState.surgeLevel}` : uiState.zone === "danger" ? "Apex Bonus Live" : "Quiet Window";
   const alertCopy = uiState.lowHealth
     ? "Health is low. Break line-of-sight, burst away, or get back to the nest."
+    : surgeActive
+      ? "Your stride hits harder and your bite recovers faster. Chain blooms or kills before the window burns out."
     : uiState.zone === "danger"
       ? `All DNA gains are boosted by ${Math.round((uiState.dangerBoost - 1) * 100)}% while you stay inside the red basin.`
       : uiState.canUpgrade
@@ -86,7 +91,7 @@ export function GameApp() {
         : "Use the open dunes to route between blooms, then cash in upgrades at the nest.";
 
   return (
-    <div className={`game-shell ${uiState.zone === "danger" ? "is-danger" : ""} ${uiState.lowHealth ? "is-low-health" : ""}`}>
+    <div className={`game-shell ${uiState.zone === "danger" ? "is-danger" : ""} ${uiState.lowHealth ? "is-low-health" : ""} ${surgeActive ? "is-surging" : ""}`}>
       <div className="game-stage">
         <div className="game-canvas" ref={mountRef} />
 
@@ -98,7 +103,19 @@ export function GameApp() {
               <p className="status-copy">{uiState.controlsHint}</p>
               <div className={`status-banner ${alertTone}`}>
                 <span>{alertTitle}</span>
-                <strong>{uiState.runScore > 0 ? `Run ${uiState.runScore}` : uiState.canUpgrade ? "Nest ready" : "Leave the bowl"}</strong>
+                <strong>{surgeActive ? `Hot ${Math.round(uiState.surgeCharge * 100)}%` : uiState.runScore > 0 ? `Run ${uiState.runScore}` : uiState.canUpgrade ? "Nest ready" : "Leave the bowl"}</strong>
+              </div>
+              <div className={`surge-strip ${surgeActive ? "active" : ""}`}>
+                <div className="surge-copy">
+                  <span>Feral Surge</span>
+                  <strong>{surgeActive ? `x${uiState.surgeLevel}` : "Dormant"}</strong>
+                </div>
+                <div className="meter">
+                  <div
+                    className="meter-fill surge-fill"
+                    style={{ width: `${Math.max(0, Math.min(100, uiState.surgeCharge * 100))}%` }}
+                  />
+                </div>
               </div>
             </div>
 
@@ -195,6 +212,10 @@ export function GameApp() {
                 <div className="hunt-stat">
                   <span>Total kills</span>
                   <strong>{totalKills}</strong>
+                </div>
+                <div className="hunt-stat">
+                  <span>Surge</span>
+                  <strong>{surgeActive ? `x${uiState.surgeLevel}` : "Idle"}</strong>
                 </div>
               </div>
 

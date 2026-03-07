@@ -316,6 +316,91 @@ function createZoneParticles({ count, centerX, centerZ, radius, color, altColor,
   );
 }
 
+function createSunHalo() {
+  const halo = new THREE.Group();
+
+  const outer = new THREE.Mesh(
+    new THREE.CircleGeometry(16, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xffc88e,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+    }),
+  );
+  halo.add(outer);
+
+  const inner = new THREE.Mesh(
+    new THREE.CircleGeometry(10.5, 40),
+    new THREE.MeshBasicMaterial({
+      color: 0xffefc4,
+      transparent: true,
+      opacity: 0.1,
+      depthWrite: false,
+    }),
+  );
+  inner.position.z = 0.2;
+  halo.add(inner);
+
+  halo.lookAt(0, 0, 0);
+  return halo;
+}
+
+function createCarrionBird(scale, color) {
+  const bird = new THREE.Group();
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.84,
+  });
+
+  const wingGeometry = new THREE.BoxGeometry(0.95 * scale, 0.03 * scale, 0.24 * scale);
+  const leftWing = new THREE.Mesh(wingGeometry, material);
+  leftWing.position.x = -0.4 * scale;
+  leftWing.rotation.z = 0.42;
+  bird.add(leftWing);
+
+  const rightWing = new THREE.Mesh(wingGeometry, material);
+  rightWing.position.x = 0.4 * scale;
+  rightWing.rotation.z = -0.42;
+  bird.add(rightWing);
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.2 * scale, 0.06 * scale, 0.5 * scale),
+    material,
+  );
+  body.rotation.x = 0.12;
+  bird.add(body);
+
+  return bird;
+}
+
+function createCarrionFlock({ centerX, centerY, centerZ, radius, count, scale, color }) {
+  const group = new THREE.Group();
+  group.position.set(centerX, centerY, centerZ);
+  const birds = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const bird = createCarrionBird(scale * (0.8 + Math.random() * 0.5), color);
+    bird.userData = {
+      angle: Math.random() * Math.PI * 2,
+      radius: radius * (0.55 + Math.random() * 0.5),
+      speed: 0.14 + Math.random() * 0.08,
+      phase: Math.random() * Math.PI * 2,
+      height: (Math.random() - 0.5) * 1.6,
+      depth: 0.45 + Math.random() * 0.4,
+    };
+    group.add(bird);
+    birds.push(bird);
+  }
+
+  return {
+    group,
+    birds,
+    speed: 0.002 + Math.random() * 0.0025,
+  };
+}
+
 function addNest(group) {
   const nest = new THREE.Group();
   nest.position.set(NEST_POSITION.x, getTerrainHeight(NEST_POSITION.x, NEST_POSITION.z), NEST_POSITION.z);
@@ -566,6 +651,10 @@ export function buildWorld(scene) {
   sun.position.set(-65, 48, -48);
   world.add(sun);
 
+  const sunHalo = createSunHalo();
+  sunHalo.position.copy(sun.position);
+  world.add(sunHalo);
+
   const moon = new THREE.Mesh(
     new THREE.IcosahedronGeometry(3.2, 0),
     new THREE.MeshBasicMaterial({
@@ -577,6 +666,28 @@ export function buildWorld(scene) {
   moon.position.set(46, 32, -76);
   world.add(moon);
 
+  const carrionFlock = createCarrionFlock({
+    centerX: 24,
+    centerY: 26,
+    centerZ: -18,
+    radius: 18,
+    count: 6,
+    scale: 1.35,
+    color: 0x5a3226,
+  });
+  world.add(carrionFlock.group);
+
+  const highFlock = createCarrionFlock({
+    centerX: -8,
+    centerY: 34,
+    centerZ: -42,
+    radius: 24,
+    count: 5,
+    scale: 1.1,
+    color: 0x6b4031,
+  });
+  world.add(highFlock.group);
+
   scene.add(world);
 
   return {
@@ -587,5 +698,7 @@ export function buildWorld(scene) {
     nestRing: nest.safeRing,
     dangerRing: dangerMarker.ring,
     zoneParticles: [nestMotes, dangerEmbers],
+    sunHalo,
+    skyFlocks: [carrionFlock, highFlock],
   };
 }

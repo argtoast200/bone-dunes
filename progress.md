@@ -44,3 +44,26 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
   - skipped stage expansion, species/civilization systems, broad crafting, quest chains, and new biome/maps
   - kept enemy count modest instead of adding more factions
   - kept progression to a few high-payoff hooks rather than building a large tech tree
+
+## 2026-03-06 Feel Pass 2
+
+- Current request: do one more polish pass focused on feel, visual atmosphere, addictiveness, and heavier attacks/combat.
+- Implemented:
+  - added heavier bite feedback with micro hit-stop, stronger recoil, FOV kick, extra bite burst, enemy squash/recoil, and more forceful damage reactions
+  - added a lightweight `Feral Surge` loop: pickups and kills now feed a short buff window that improves movement/bite recovery and creates a better chain-hunt rhythm without adding a large system
+  - added stronger atmospheric motion with a sun halo, circling carrion flocks, and HUD surge presentation so the world feels more alive and the run state is easier to read
+- Validation:
+  - `npm run build` passes after the second pass
+  - shared web-game client screenshot/state captured at `output/web-game/feel-pass-2`
+  - visual inspection: the HUD now reads the surge state clearly and the scene has more ambient motion/menace
+  - deterministic browser checks:
+    - left-click move still responded and traveled about `3.3` world units in the chosen test target/camera setup
+    - arrow steering traveled about `6.8` world units
+    - `Shift` sprint traveled about `9.34` world units and consumed about `31%` sprint charge
+    - `Space` bite still dealt `22`
+    - right-click bite still dealt `22`
+    - a forced predator kill triggered `Feral Surge x2` with about `55%` surge charge remaining
+    - no browser console errors beyond the React DevTools info banner
+- Scope still protected:
+  - did not add additional progression trees, new map layers, or content-sprawl systems
+  - kept the new addictive loop inside the existing food/combat flow instead of building a separate mode
