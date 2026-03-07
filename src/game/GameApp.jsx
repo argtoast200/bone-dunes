@@ -19,7 +19,9 @@ const initialState = {
   health: 120,
   maxHealth: 120,
   sprintCharge: 1,
+  showSprintHud: false,
   biteCharge: 1,
+  showAttackHud: false,
   attackPhase: "idle",
   attackResult: "ready",
   surgeCharge: 0,
@@ -37,6 +39,17 @@ const initialState = {
   activeMigration: null,
   gamepadConnected: false,
   gamepadLabel: "",
+  speciesName: "Boney Snapper",
+  maturationLabel: "Fully Grown Boney Snapper",
+  maturationTone: "grown",
+  maturationProgress: 100,
+  maturationDetail: "Adult body online",
+  hudMap: {
+    range: 26,
+    worldRadius: 58,
+    player: { x: 0, z: 0, yaw: Math.PI },
+    nest: { dx: 0, dz: 0, distance: 0, bearing: 0, atNest: true },
+  },
   nearbySpecies: [],
   nearbyNests: [],
   upgrades: {
@@ -49,6 +62,7 @@ const initialState = {
     glow: 0,
   },
   upgradeEntries: [],
+  evolutionPreviewStats: [],
   editorOpen: false,
   editorTab: "evolution",
   editorPulse: 0,
@@ -72,6 +86,7 @@ const initialState = {
       size: 1,
     },
     traitTotal: 0,
+    maturityTarget: 26,
   },
   traitStats: [],
   lastEvolution: null,
@@ -79,6 +94,17 @@ const initialState = {
   canUpgrade: false,
   controlsHint: "Left click move, WASD/Arrows steer, Space/right click bite, then return to the nest to evolve",
 };
+
+const UPGRADE_GROUPS = [
+  { key: "head", label: "Head", summary: "Commit harder bites.", keys: ["jaw", "horns"] },
+  { key: "mobility", label: "Mobility", summary: "Move cleanly and stay on prey.", keys: ["legs", "tail"] },
+  { key: "defense", label: "Defense", summary: "Survive heavier contact.", keys: ["spikes", "crest"] },
+  { key: "traits", label: "Traits", summary: "Refine recovery and identity.", keys: ["glow"] },
+];
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function MobileButton({ label, onPressStart, onPressEnd, className = "" }) {
   return (
@@ -92,6 +118,125 @@ function MobileButton({ label, onPressStart, onPressEnd, className = "" }) {
     >
       {label}
     </button>
+  );
+}
+
+function formatStatValue(stat, value) {
+  if (stat.format === "decimal") {
+    return Number(value).toFixed(1);
+  }
+  return `${Math.round(value)}`;
+}
+
+function getStatDelta(stat) {
+  const delta = Number((stat.next - stat.current).toFixed(stat.format === "decimal" ? 1 : 0));
+  if (Math.abs(delta) < 0.05) {
+    return { label: "No change", tone: "flat" };
+  }
+
+  const prefersLower = stat.better === "lower";
+  const improved = prefersLower ? delta < 0 : delta > 0;
+  const label = `${delta > 0 ? "+" : ""}${delta}${stat.format === "decimal" ? "" : ""}`;
+  return {
+    label,
+    tone: improved ? "up" : "down",
+  };
+}
+
+function getBearingLabel(angle) {
+  const directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  const normalized = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const index = Math.round(normalized / (Math.PI / 4)) % directions.length;
+  return directions[index];
+}
+
+function GrowthRing({ value, tone }) {
+  return (
+    <div
+      className={`growth-ring ${tone}`}
+      style={{ "--progress": `${clamp(value, 0, 100)}%` }}
+    >
+      <div className="growth-ring-core">
+        <strong>{Math.round(clamp(value, 0, 100))}%</strong>
+      </div>
+    </div>
+  );
+}
+
+function HudMeter({ label, value, fill, tone = "health", detail = null }) {
+  return (
+    <div className={`vital-card ${tone}`}>
+      <div className="vital-head">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </div>
+      <div className="meter">
+        <div className={`meter-fill ${tone}-fill`} style={{ width: `${clamp(fill, 0, 100)}%` }} />
+      </div>
+      {detail && <small>{detail}</small>}
+    </div>
+  );
+}
+
+function MiniMap({ hudMap, zone }) {
+  const center = 70;
+  const radius = 48;
+  const safeHudMap = hudMap ?? initialState.hudMap;
+  const playerYaw = safeHudMap.player?.yaw ?? Math.PI;
+  const nest = safeHudMap.nest ?? initialState.hudMap.nest;
+  const range = Math.max(14, safeHudMap.range ?? 26);
+  const localX = (nest.dx / range) * radius;
+  const localY = (-nest.dz / range) * radius;
+  const distance = Math.hypot(localX, localY);
+  const rim = radius - 7;
+  const scale = distance > rim && distance > 0.001 ? rim / distance : 1;
+  const nestX = center + localX * scale;
+  const nestY = center + localY * scale;
+  const bearing = getBearingLabel(nest.bearing ?? 0);
+
+  return (
+    <section className="mini-map-card">
+      <div className="mini-map-copy">
+        <p className="eyebrow">Nest Route</p>
+        <strong>{nest.atNest ? "At species nest" : `Nest ${Math.round(nest.distance)}m ${bearing}`}</strong>
+        <small>{zone === "danger" ? "Danger pressure rises away from home." : "Use the nest beacon to bank DNA safely."}</small>
+      </div>
+
+      <div className="mini-map-frame">
+        <svg className="mini-map-svg" viewBox="0 0 140 140" aria-hidden="true">
+          <circle cx="70" cy="70" r="58" className="mini-map-shell" />
+          <circle cx="70" cy="70" r="48" className="mini-map-core" />
+          <circle cx="70" cy="22" r="2" className="mini-map-north-tick" />
+          <circle cx="70" cy="70" r="2.5" className="mini-map-center" />
+          <circle cx={nestX} cy={nestY} r={nest.atNest ? 7 : 5.5} className="mini-map-nest-dot" />
+          {distance > rim && (
+            <g transform={`translate(${nestX} ${nestY}) rotate(${(Math.atan2(localX, -localY) * 180) / Math.PI})`}>
+              <path d="M0,-10 L5,2 L0,-1 L-5,2 Z" className="mini-map-rim-arrow" />
+            </g>
+          )}
+          <g transform={`translate(70 70) rotate(${(playerYaw * 180) / Math.PI})`}>
+            <path d="M0,-17 L9,11 L0,5 L-9,11 Z" className="mini-map-player" />
+          </g>
+        </svg>
+        <span className={`mini-map-zone ${zone}`}>{zone === "danger" ? "Threat" : zone === "nest" ? "Nest" : "Dunes"}</span>
+      </div>
+    </section>
+  );
+}
+
+function EvolutionStatCard({ stat }) {
+  const delta = getStatDelta(stat);
+  const prefersLower = stat.better === "lower";
+  return (
+    <div className={`stat-comparison-card ${delta.tone} ${prefersLower ? "prefers-lower" : ""}`}>
+      <span>{stat.label}</span>
+      <strong>{formatStatValue(stat, stat.next)}</strong>
+      <small>
+        Now {formatStatValue(stat, stat.current)}
+        {" • "}
+        {delta.label}
+      </small>
+    </div>
   );
 }
 
@@ -118,19 +263,16 @@ export function GameApp() {
     gameRef.current?.setVirtualInput(key, pressed);
   };
 
-  const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated + uiState.herbivoresDefeated;
-  const zoneTitle = uiState.zone === "nest" ? "Safe Nest" : uiState.zone === "danger" ? "Predator Territory" : "Open Dunes";
-  const surgeActive = uiState.surgeCharge > 0.05;
-  const activeMutations = uiState.upgradeEntries.filter((upgrade) => upgrade.level > 0);
-  const editorTransforming = uiState.editorOpen && uiState.editorPulse > 0.08;
   const activeCreature = uiState.activeCreature;
   const activeIdentity = activeCreature?.identity ?? uiState.creatureIdentity;
-  const activeStage = activeCreature?.stage ?? "Adult";
-  const activeGrowthPct = activeCreature?.maturityPct ?? 100;
-  const speciesCount = uiState.speciesRoster.length;
+  const stageLabel = activeCreature?.stageLabel ?? uiState.maturationLabel;
+  const stageTone = activeCreature?.maturationTone ?? uiState.maturationTone;
+  const stageDetail = activeCreature?.maturationDetail ?? uiState.maturationDetail;
+  const growthDisplay = uiState.maturationProgress ?? activeCreature?.maturityPct ?? 100;
+  const speciesCount = uiState.speciesRoster.length || 1;
   const draftIdentity = uiState.evolutionDraft?.identity ?? "Unshaped Egg";
   const draftBaseIdentity = uiState.evolutionDraft?.baseIdentity ?? activeIdentity;
-  const territoryPressure = Math.round((uiState.territoryAlert ?? 0) * 100);
+  const healthPct = uiState.maxHealth > 0 ? (uiState.health / uiState.maxHealth) * 100 : 0;
   const biteStatus = uiState.attackPhase === "windup"
     ? "Coiling"
     : uiState.attackPhase === "strike"
@@ -143,372 +285,118 @@ export function GameApp() {
             ? "Crushed"
             : uiState.attackResult === "broken"
               ? "Broken"
-            : uiState.attackResult === "miss"
-              ? "Missed"
-              : uiState.biteCharge >= 0.98
-                ? "Ready"
-                : "Recovering";
-  const alertTone = uiState.lowHealth ? "warning" : surgeActive ? "surge" : uiState.zone === "danger" ? "danger" : "calm";
+              : uiState.attackResult === "miss"
+                ? "Missed"
+                : uiState.biteCharge >= 0.98
+                  ? "Ready"
+                  : "Recovering";
+  const evolutionGroups = UPGRADE_GROUPS.map((group) => ({
+    ...group,
+    entries: group.keys
+      .map((key) => uiState.upgradeEntries.find((upgrade) => upgrade.key === key))
+      .filter(Boolean),
+  }));
+  const liveControls = uiState.gamepadConnected
+    ? "A or RT bite • B or LB sprint • Start opens the nest"
+    : "Shift sprint • Space or right click bite • F fullscreen";
+
+  let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";
+  if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
+    contextPrompt = "Egg draft ready. Open Creature Evolution, then lay the egg from Species.";
+  } else if (uiState.canOpenEditor) {
+    contextPrompt = uiState.dna > 0
+      ? "Back at the nest. Spend DNA to shape the next body."
+      : "Back at the nest. Hunt for DNA or switch into another body.";
+  } else if (activeCreature && activeCreature.maturityPct < 100) {
+    contextPrompt = `${stageLabel} grows faster from time alive and clean kills.`;
+  } else if (uiState.lowHealth) {
+    contextPrompt = "Low health. Break away and follow the nest beacon home.";
+  } else if (uiState.zone === "danger") {
+    contextPrompt = `${uiState.territoryOwner ?? "Predator"} territory. Take quick fights and bank DNA before this body falls.`;
+  }
 
   return (
-    <div className={`game-shell ${uiState.zone === "danger" ? "is-danger" : ""} ${uiState.lowHealth ? "is-low-health" : ""} ${surgeActive ? "is-surging" : ""}`}>
+    <div className={`game-shell ${uiState.zone === "danger" ? "is-danger" : ""} ${uiState.lowHealth ? "is-low-health" : ""} ${uiState.surgeCharge > 0.05 ? "is-surging" : ""}`}>
       <div className="game-stage">
         <div className="game-canvas" ref={mountRef} />
 
         <div className="hud-layer">
-          <header className="top-bar">
-            <div className="brand-card compact-brand-card">
-              <div className="brand-head">
-                <div>
-                  <p className="eyebrow">Species Line</p>
-                  <h1>Bone Dunes</h1>
-                </div>
-                <span className={`zone-pill ${activeGrowthPct >= 100 ? "active" : ""}`}>
-                  {activeStage}
-                  {" "}
-                  {activeGrowthPct}%
-                </span>
-              </div>
-
-              <div className="brand-active">
-                <span>Active body</span>
-                <strong>{activeIdentity}</strong>
-                <small>
-                  Gen
-                  {" "}
-                  {activeCreature?.generation ?? 1}
-                  {" • "}
-                  {speciesCount}
-                  /6 bodies
-                  {" • "}
-                  {uiState.speciesXp}
-                  {" "}
-                  XP
-                </small>
-              </div>
-
-              <div className="compact-meter-block">
-                <div className="meter-copy">
-                  <span>Growth</span>
-                  <strong>{activeGrowthPct}%</strong>
-                </div>
-                <div className="meter">
-                  <div
-                    className="meter-fill surge-fill"
-                    style={{ width: `${Math.max(0, Math.min(100, activeGrowthPct))}%` }}
-                  />
-                </div>
-              </div>
-
-              <p className="status-copy">{uiState.controlsHint}</p>
-
-              <div className="trait-chip-row compact-status-row">
-                <span className="trait-chip active">
-                  DNA
-                  {" "}
-                  {uiState.dna}
-                </span>
-                <span className="trait-chip">
-                  {surgeActive ? `Feral x${uiState.surgeLevel}` : uiState.gamepadConnected ? "Pad Ready" : "Nest Line"}
-                </span>
-                {uiState.evolutionDraft?.modified && <span className="trait-chip active">Egg Ready</span>}
-              </div>
-            </div>
-
-            <div className="resource-strip">
-              <div className="resource-card">
-                <span>Health</span>
-                <strong>
-                  {Math.round(uiState.health)} / {Math.round(uiState.maxHealth)}
-                </strong>
-                <div className="meter">
-                  <div
-                    className="meter-fill health-fill"
-                    style={{ width: `${Math.max(0, (uiState.health / uiState.maxHealth) * 100)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="resource-card">
-                <span>Sprint</span>
-                <strong>{Math.round(uiState.sprintCharge * 100)}%</strong>
-                <div className="meter">
-                  <div
-                    className="meter-fill sprint-fill"
-                    style={{ width: `${Math.max(0, uiState.sprintCharge * 100)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className={`resource-card bite-card ${uiState.attackResult}`}>
-                <span>Bite</span>
-                <strong>{biteStatus}</strong>
-                <div className="meter">
-                  <div
-                    className="meter-fill bite-fill"
-                    style={{ width: `${Math.max(0, Math.min(100, uiState.biteCharge * 100))}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="resource-card">
-                <span>DNA</span>
-                <strong>{uiState.dna}</strong>
-                <div className="meter">
-                  <div
-                    className="meter-fill dna-fill"
-                    style={{ width: `${Math.min(100, 18 + uiState.dna * 3)}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          </header>
-
-          <aside className="side-panel">
-            <div className="panel-card zone-card">
-              <p className="eyebrow">Area</p>
-              <h2>{zoneTitle}</h2>
-              <div className="zone-meta">
-                <span className={`zone-pill ${uiState.canUpgrade ? "active" : ""}`}>
-                  {uiState.canUpgrade ? "Nest Access" : uiState.zone === "danger" ? "High Risk" : "Traveling"}
-                </span>
-                {uiState.territoryOwner && <span className="zone-pill active">{uiState.territoryOwner}</span>}
-                <span className="zone-chip">{uiState.threatDistance ? `Threat ${uiState.threatDistance.toFixed(0)}m` : "Threat unknown"}</span>
-              </div>
-              <p>{uiState.objective}</p>
-              <p className="signal-copy ecosystem-signal zone-signal">
-                {uiState.activeMigration
-                  ? `${uiState.activeMigration.label}: ${uiState.activeMigration.species} are on the move for ${uiState.activeMigration.timeLeft}s.`
-                  : uiState.territoryOwner
-                    ? `${uiState.territoryOwner} pressure at ${territoryPressure}% around ${uiState.territoryName}.`
-                    : uiState.ecosystemNotice}
-              </p>
-            </div>
-
-            <div className="panel-card species-card">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Species Nest</p>
-                  <h2>{activeIdentity}</h2>
-                </div>
-                <span className={`zone-pill ${uiState.activeMigration ? "active" : ""}`}>
-                  {uiState.canLayEgg ? "Egg Ready" : uiState.editorOpen ? "Nest Open" : uiState.canUpgrade ? "Nest Ready" : "Return Home"}
-                </span>
-              </div>
-
-              <p>
-                {activeCreature?.stage === "Adult"
-                  ? "Adult body online. Use Creature Evolution to design the next egg, then hatch it from the Species Nest."
-                  : `${activeIdentity} is still ${activeCreature?.stage?.toLowerCase()}. Time alive and kills accelerate maturation.`}
-              </p>
-
-              <div className="hunt-grid ecosystem-grid">
-                <div className="hunt-stat">
-                  <span>Species XP</span>
-                  <strong>{uiState.speciesXp}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Bodies</span>
-                  <strong>
-                    {speciesCount}
-                    /6
-                  </strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Growth</span>
-                  <strong>{activeGrowthPct}%</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Next Egg</span>
-                  <strong>{uiState.evolutionDraft?.modified ? "Ready" : "Draft"}</strong>
-                </div>
-              </div>
-
-              <div className="evolution-preview">
-                <div>
-                  <p className="eyebrow">Egg Draft</p>
-                  <h3>{draftIdentity}</h3>
-                  <p>
-                    Based on
-                    {" "}
-                    {draftBaseIdentity}
-                    . Spend DNA in Creature Evolution, then return here to lay the egg.
-                  </p>
-                </div>
-                <div className="trait-chip-row">
-                  {(activeMutations.length > 0 ? activeMutations : uiState.upgradeEntries.slice(0, 3)).slice(0, 4).map((upgrade) => (
-                    <span key={upgrade.key} className={`trait-chip ${upgrade.level > 0 ? "active" : ""}`}>
-                      {upgrade.label}
-                      {upgrade.level > 0 ? ` Lv ${upgrade.level}` : ""}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="trait-stat-grid compact">
-                {[
-                  { label: "Generation", value: activeCreature?.generation ?? 1, detail: "current body" },
-                  { label: "Stage", value: activeStage, detail: "growth state" },
-                  { label: "Kills", value: activeCreature?.killCount ?? 0, detail: "this body" },
-                  { label: "Egg Traits", value: uiState.evolutionDraft?.traitTotal ?? 0, detail: "draft complexity" },
-                ].map((stat) => (
-                  <div key={stat.label} className="trait-stat">
-                    <span>{stat.label}</span>
-                    <strong>{stat.value}</strong>
-                    <small>{stat.detail}</small>
+          {uiState.mode === "playing" && !uiState.editorOpen && (
+            <div className="play-hud">
+              <div className="hud-top-row">
+                <section className="lineage-chip">
+                  <div className="lineage-chip-main">
+                    <div className="lineage-copy">
+                      <p className="eyebrow">Creature Line</p>
+                      <h1>{stageLabel}</h1>
+                      <p className="lineage-subline">
+                        {activeIdentity}
+                        {" • "}
+                        {stageDetail}
+                      </p>
+                    </div>
+                    <GrowthRing value={growthDisplay} tone={stageTone} />
                   </div>
-                ))}
+
+                  <div className="lineage-pill-row">
+                    <span className="lineage-pill active">DNA {uiState.dna}</span>
+                    <span className="lineage-pill">XP {uiState.speciesXp}</span>
+                    <span className="lineage-pill">
+                      {speciesCount}
+                      {" "}
+                      alive
+                    </span>
+                  </div>
+                </section>
+
+                <MiniMap hudMap={uiState.hudMap} zone={uiState.zone} />
               </div>
 
-              <p className="signal-copy">{uiState.message}</p>
+              <div className="vitals-stack">
+                <HudMeter
+                  label="Health"
+                  value={`${Math.round(uiState.health)} / ${Math.round(uiState.maxHealth)}`}
+                  fill={healthPct}
+                  tone="health"
+                />
+                {uiState.showSprintHud && (
+                  <HudMeter
+                    label="Sprint"
+                    value={`${Math.round(uiState.sprintCharge * 100)}%`}
+                    fill={uiState.sprintCharge * 100}
+                    tone="sprint"
+                    detail="Shown only while pushing into a sprint."
+                  />
+                )}
+                {uiState.showAttackHud && (
+                  <HudMeter
+                    label="Bite"
+                    value={biteStatus}
+                    fill={uiState.biteCharge * 100}
+                    tone="bite"
+                    detail="Appears when a fight is live."
+                  />
+                )}
+              </div>
 
-              <div className="editor-actions">
-                <button
-                  className="utility-btn"
-                  type="button"
-                  disabled={!uiState.canOpenEditor}
-                  onClick={() => gameRef.current?.toggleEditor(true)}
-                >
-                  Open Species Nest
-                </button>
-                {uiState.editorOpen && (
-                  <button className="utility-btn secondary" type="button" onClick={() => gameRef.current?.toggleEditor(false)}>
-                    Close Nest
+              <div className="context-strip">
+                <div>
+                  <p className="eyebrow">Focus</p>
+                  <strong>{contextPrompt}</strong>
+                  <small>
+                    {uiState.gamepadConnected ? "Controller live." : "Keyboard and mouse live."}
+                    {" "}
+                    {liveControls}
+                  </small>
+                </div>
+                {uiState.canOpenEditor && (
+                  <button className="utility-btn nest-action-btn" type="button" onClick={() => gameRef.current?.toggleEditor(true)}>
+                    Creature Evolution
                   </button>
                 )}
               </div>
             </div>
-
-            <div className="panel-card ecosystem-card">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Ecosystem</p>
-                  <h2>{uiState.territoryOwner ?? "Open Dunes"}</h2>
-                </div>
-                <span className={`zone-pill ${uiState.activeMigration ? "active" : ""}`}>
-                  {uiState.activeMigration ? uiState.activeMigration.label : uiState.territoryName ?? "No Active Claim"}
-                </span>
-              </div>
-
-              <p>
-                {uiState.territoryOwner
-                  ? `${uiState.territoryOwner} hold ${uiState.territoryName}. ${uiState.territoryTemperament} behavior spikes as you push deeper.`
-                  : "Species drift between landmarks until a migration, carcass, or intruder pulls them into a new fight."}
-              </p>
-
-              <div className="hunt-grid ecosystem-grid">
-                <div className="hunt-stat">
-                  <span>Territory alert</span>
-                  <strong>{uiState.territoryOwner ? `${territoryPressure}%` : "Low"}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Presence</span>
-                  <strong>{uiState.territoryPopulation ?? "--"}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Migration</span>
-                  <strong>{uiState.activeMigration ? `${uiState.activeMigration.timeLeft}s` : "Quiet"}</strong>
-                </div>
-              </div>
-
-              <div className="trait-chip-row ecosystem-chip-row">
-                {uiState.nearbySpecies.slice(0, 4).map((entry) => (
-                  <span key={entry.id} className="trait-chip active ecosystem-chip">
-                    {entry.species}
-                    {" "}
-                    {entry.distance.toFixed(0)}m
-                  </span>
-                ))}
-              </div>
-
-              {uiState.nearbyNests.length > 0 && (
-                <div className="nest-list">
-                  {uiState.nearbyNests.slice(0, 2).map((nest) => (
-                    <div key={`${nest.species}-${nest.distance}`} className={`nest-pill ${nest.destroyed ? "broken" : ""}`}>
-                      <span>{nest.species}</span>
-                      <strong>{nest.destroyed ? "Broken" : `${Math.round((nest.hp / nest.maxHp) * 100)}% nest`}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="panel-card hunt-card">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Hunt</p>
-                  <h2>Current Excursion</h2>
-                </div>
-                <span className="zone-chip">{surgeActive ? `Feral x${uiState.surgeLevel}` : `${uiState.bestRun} best`}</span>
-              </div>
-
-              <div className="hunt-grid">
-                <div className="hunt-stat">
-                  <span>DNA this hunt</span>
-                  <strong>{uiState.sessionDna}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Run score</span>
-                  <strong>{uiState.runScore}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Predators</span>
-                  <strong>{uiState.predatorsDefeated}</strong>
-                </div>
-                <div className="hunt-stat">
-                  <span>Total kills</span>
-                  <strong>{totalKills}</strong>
-                </div>
-              </div>
-
-              <p>{uiState.huntSummary}</p>
-            </div>
-          </aside>
-
-          <div className="bottom-row">
-            <div className={`panel-card loop-card ${alertTone}`}>
-              <p className="eyebrow">{uiState.zone === "danger" ? "Push Deeper" : "Growth Loop"}</p>
-              <p>
-                {activeCreature?.maturityPct < 100
-                  ? `${activeIdentity} is still growing. Time alive in this body and clean kills accelerate maturation.`
-                  : uiState.evolutionDraft?.modified
-                    ? `${draftIdentity} is drafted. Return to the Species Nest tab and lay the egg when you want to branch the line.`
-                    : uiState.activeMigration
-                      ? `${uiState.activeMigration.label} is live. Ride the ecosystem pressure for DNA, then bring that DNA home to design the next body.`
-                      : uiState.zone === "danger"
-                        ? "Danger territory pays richer DNA, but every mistake can kill the body you are trying to mature."
-                        : "Gather DNA, shape a new egg, hatch it at the nest, then swap between bodies as the species line grows."}
-              </p>
-            </div>
-
-            <div className="panel-card utility-card">
-              <div className="utility-copy">
-                <span>Species XP</span>
-                <strong>{uiState.speciesXp}</strong>
-              </div>
-              <div className="utility-copy">
-                <span>Bodies</span>
-                <strong>
-                  {speciesCount}
-                  /6
-                </strong>
-              </div>
-              <button
-                className="utility-btn"
-                type="button"
-                disabled={!uiState.canOpenEditor}
-                onClick={() => gameRef.current?.toggleEditor(true)}
-              >
-                Species Nest
-              </button>
-              <button className="utility-btn" type="button" onClick={() => gameRef.current?.toggleFullscreen()}>
-                Fullscreen
-              </button>
-              <button className="utility-btn secondary" type="button" onClick={() => gameRef.current?.resetProgress()}>
-                Reset Save
-              </button>
-            </div>
-          </div>
+          )}
 
           <div className="mobile-controls">
             <div className="dpad">
@@ -548,45 +436,39 @@ export function GameApp() {
 
           {uiState.mode === "menu" && (
             <div className="menu-overlay">
-              <div className="menu-card">
-                <p className="eyebrow">Playable Vertical Slice</p>
-                <h2>Evolve a species line, not just a single run.</h2>
-                <p>
-                  Gather DNA in the Bone Dunes, return to the nest to shape a new egg, then survive in that newborn body until it grows into its full form.
-                </p>
-
-                <div className="menu-grid">
+              <div className="menu-card menu-shell">
+                <div className="menu-hero">
                   <div>
-                    <h3>Controls</h3>
-                    <p>`Left click` move target</p>
-                    <p>`WASD` or `Arrows` steer</p>
-                    <p>`Shift` sprint</p>
-                    <p>`Space` or `Right click` bite</p>
-                    <p>`Xbox controller` supported</p>
-                    <p>`F` fullscreen</p>
+                    <p className="eyebrow">Creature Slice</p>
+                    <h2>Bone Dunes</h2>
+                    <p>
+                      Build a species line by bringing DNA home, laying a new egg, then raising that newborn into a stronger creature.
+                    </p>
                   </div>
-                  <div>
-                    <h3>Read the loop</h3>
-                    <p>Bring DNA home and spend it in Creature Evolution.</p>
-                    <p>Lay the egg from the Species Nest tab, then switch into the newborn.</p>
-                    <p>Time alive and kills mature that body; species XP can fast evolve it at the nest.</p>
+                  <div className="menu-pill-row">
+                    <span className="lineage-pill active">Species {speciesCount}</span>
+                    <span className="lineage-pill">XP {uiState.speciesXp}</span>
+                    <span className="lineage-pill">DNA {uiState.dna}</span>
                   </div>
                 </div>
 
-                <div className="menu-stats">
-                  <div>
-                    <span>Bodies</span>
-                    <strong>{speciesCount || 1}</strong>
+                <div className="menu-grid">
+                  <div className="menu-panel">
+                    <h3>Core Loop</h3>
+                    <p>Hunt for DNA. Return to the nest. Spend DNA in Creature Evolution. Lay the egg. Raise the newborn.</p>
                   </div>
-                  <div>
-                    <span>Species XP</span>
-                    <strong>{uiState.speciesXp}</strong>
+                  <div className="menu-panel">
+                    <h3>Controls</h3>
+                    <p>`Left click` move</p>
+                    <p>`WASD` or `Arrows` steer</p>
+                    <p>`Shift` sprint</p>
+                    <p>`Space`, `Right click`, or controller face buttons bite</p>
                   </div>
                 </div>
 
                 <div className="menu-actions">
                   <button id="start-btn" className="start-btn" type="button" onClick={() => gameRef.current?.startGame()}>
-                    {uiState.hasSave ? "Resume Hunt" : "Start Hunt"}
+                    {uiState.hasSave ? "Resume Species" : "Start Species"}
                   </button>
                   <button className="ghost-btn" type="button" onClick={() => gameRef.current?.resetProgress()}>
                     New Organism
@@ -598,15 +480,32 @@ export function GameApp() {
 
           {uiState.editorOpen && (
             <div className="editor-overlay">
-              <div className={`editor-card ${editorTransforming ? "is-transforming" : ""}`}>
-                <div className="panel-heading">
+              <div className={`editor-card nest-editor ${uiState.editorPulse > 0.08 ? "is-transforming" : ""}`}>
+                <div className="editor-header">
                   <div>
                     <p className="eyebrow">Species Nest</p>
-                    <h2>{activeIdentity}</h2>
+                    <h2>{uiState.editorTab === "evolution" ? "Creature Evolution" : "Species"}</h2>
+                    <p>
+                      {uiState.editorTab === "evolution"
+                        ? "Draft the next egg here. Every upgrade changes the body and lengthens the growth journey."
+                        : "Lay drafted eggs, fast evolve hatchlings with XP, or switch between living bodies in the line."}
+                    </p>
                   </div>
-                  <button className="ghost-btn" type="button" onClick={() => gameRef.current?.toggleEditor(false)}>
-                    Close Nest
-                  </button>
+
+                  <div className="editor-header-actions">
+                    <div className="lineage-pill-row">
+                      <span className="lineage-pill active">DNA {uiState.dna}</span>
+                      <span className="lineage-pill">XP {uiState.speciesXp}</span>
+                      <span className="lineage-pill">
+                        {speciesCount}
+                        {" "}
+                        alive
+                      </span>
+                    </div>
+                    <button className="ghost-btn" type="button" onClick={() => gameRef.current?.toggleEditor(false)}>
+                      Close Nest
+                    </button>
+                  </div>
                 </div>
 
                 <div className="editor-tabs">
@@ -622,126 +521,134 @@ export function GameApp() {
                     type="button"
                     onClick={() => gameRef.current?.setEditorTab("species")}
                   >
-                    Species Nest
+                    Species
                   </button>
                 </div>
 
                 {uiState.editorTab === "evolution" ? (
                   <>
-                    <div className="editor-summary-grid">
-                      <div className="editor-summary-card">
-                        <span className="zone-chip">DNA {uiState.dna}</span>
-                        <p>
-                          Drafting
-                          {" "}
-                          <strong>{draftIdentity}</strong>
-                          {" "}
-                          from
-                          {" "}
-                          {draftBaseIdentity}.
-                        </p>
-                        <p>
-                          Spend DNA here to shape the next body. Then switch to the Species Nest tab to lay the egg.
-                        </p>
-                        {uiState.lastEvolution && (
-                          <div className="evolution-flash">
-                            <strong>{uiState.lastEvolution.label}</strong>
-                            <span>{uiState.lastEvolution.summary}</span>
-                          </div>
-                        )}
+                    <div className="editor-hero">
+                      <div className="editor-preview-panel current">
+                        <span className="upgrade-slot">Current Body</span>
+                        <strong>{activeIdentity}</strong>
+                        <small>
+                          {stageLabel}
+                          {" • "}
+                          {activeCreature?.maturityPct ?? 100}
+                          % grown
+                        </small>
+                        <p>This is the body currently carrying the line through the dunes.</p>
                       </div>
 
-                      <div className="trait-stat-grid">
-                        {[
-                          { label: "Egg traits", value: uiState.evolutionDraft?.traitTotal ?? 0, detail: "draft complexity" },
-                          { label: "Bodies", value: `${speciesCount}/6`, detail: "species line" },
-                          { label: "Species XP", value: uiState.speciesXp, detail: "fast evolve bank" },
-                          { label: "Ready", value: uiState.evolutionDraft?.modified ? "Yes" : "No", detail: "egg can be laid" },
-                        ].map((stat) => (
-                          <div key={stat.label} className="trait-stat">
-                            <span>{stat.label}</span>
-                            <strong>{stat.value}</strong>
-                            <small>{stat.detail}</small>
-                          </div>
-                        ))}
+                      <div className="editor-preview-panel next">
+                        <span className="upgrade-slot">Next Egg</span>
+                        <strong>{draftIdentity}</strong>
+                        <small>
+                          Based on
+                          {" "}
+                          {draftBaseIdentity}
+                        </small>
+                        <p>{uiState.evolutionDraft?.modified ? "Ready to lay from the Species tab." : "Spend DNA to start branching a new body."}</p>
                       </div>
                     </div>
 
-                    <div className="editor-actions">
-                      <button className="utility-btn" type="button" onClick={() => gameRef.current?.setEditorTab("species")}>
-                        Go To Species Nest
-                      </button>
-                    </div>
-
-                    <div className="upgrade-list editor-upgrade-list">
-                      {uiState.upgradeEntries.map((upgrade) => (
-                        <button
-                          key={upgrade.key}
-                          type="button"
-                          className={`upgrade-btn editor-upgrade-btn ${upgrade.level > 0 ? "active" : ""}`}
-                          disabled={!upgrade.canBuy}
-                          onClick={() => gameRef.current?.purchaseUpgrade(upgrade.key)}
-                        >
-                          <div>
-                            <span className="upgrade-slot">{upgrade.slot}</span>
-                            <strong>{upgrade.label}</strong>
-                            <span>{upgrade.description}</span>
-                            <span className="upgrade-bonus">{upgrade.summary}</span>
-                            {!upgrade.maxed && <span className="upgrade-next">Next: {upgrade.nextSummary}</span>}
-                          </div>
-                          <div className="upgrade-meta">
-                            <span>Lv {upgrade.level}</span>
-                            <span>{upgrade.maxed ? "Maxed" : `${upgrade.cost} DNA`}</span>
-                          </div>
-                        </button>
+                    <div className="stat-comparison-grid">
+                      {uiState.evolutionPreviewStats.map((stat) => (
+                        <EvolutionStatCard key={stat.key} stat={stat} />
                       ))}
+                    </div>
+
+                    {uiState.lastEvolution && (
+                      <div className="evolution-flash">
+                        <strong>{uiState.lastEvolution.label}</strong>
+                        <span>{uiState.lastEvolution.summary}</span>
+                      </div>
+                    )}
+
+                    <div className="editor-group-grid">
+                      {evolutionGroups.map((group) => (
+                        <section key={group.key} className="evolution-group">
+                          <div className="evolution-group-header">
+                            <div>
+                              <p className="eyebrow">{group.label}</p>
+                              <h3>{group.summary}</h3>
+                            </div>
+                          </div>
+
+                          <div className="evolution-choice-grid">
+                            {group.entries.map((upgrade) => (
+                              <button
+                                key={upgrade.key}
+                                type="button"
+                                className={`upgrade-btn editor-upgrade-btn evolution-choice-card ${upgrade.level > 0 ? "active" : ""}`}
+                                disabled={!upgrade.canBuy}
+                                onClick={() => gameRef.current?.purchaseUpgrade(upgrade.key)}
+                              >
+                                <div className="choice-summary">
+                                  <span className="upgrade-slot">{upgrade.slot}</span>
+                                  <strong>{upgrade.label}</strong>
+                                  <span>{upgrade.description}</span>
+                                </div>
+                                <div className="choice-meta">
+                                  <span className="choice-cost">{upgrade.maxed ? "Maxed" : `${upgrade.cost} DNA`}</span>
+                                  <span className="choice-level">Lv {upgrade.level}</span>
+                                </div>
+                                <span className="upgrade-bonus">{upgrade.summary}</span>
+                                {!upgrade.maxed && <span className="upgrade-next">Next: {upgrade.nextSummary}</span>}
+                                {!upgrade.maxed && (
+                                  <span className="choice-tradeoff">
+                                    Growth
+                                    {" "}
+                                    +{upgrade.growthDelta}
+                                  </span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+
+                    <div className="editor-footer">
+                      <button className="utility-btn" type="button" onClick={() => gameRef.current?.setEditorTab("species")}>
+                        Go To Species
+                      </button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <div className="editor-summary-grid">
-                      <div className="editor-summary-card">
-                        <span className="zone-chip">Species XP {uiState.speciesXp}</span>
-                        <p>
-                          Active body:
+                    <div className="species-summary-bar">
+                      <div className="species-summary-card">
+                        <span className="upgrade-slot">Active Body</span>
+                        <strong>{activeIdentity}</strong>
+                        <small>
+                          {stageLabel}
+                          {" • "}
+                          {activeCreature?.killCount ?? 0}
                           {" "}
-                          <strong>{activeIdentity}</strong>
-                          {" "}
-                          {activeStage.toLowerCase()}
-                          {" "}
-                          at
-                          {" "}
-                          {activeGrowthPct}
-                          % growth.
-                        </p>
-                        <p>
-                          Lay the drafted egg here, then swap between any body in the line. Hatchlings mature from time alive and kills.
-                        </p>
-                        {uiState.rosterFull && (
-                          <div className="evolution-flash">
-                            <strong>Roster Full</strong>
-                            <span>The species line is at 6 bodies. Switch into an existing body before drafting farther.</span>
-                          </div>
-                        )}
+                          kills
+                        </small>
                       </div>
-
-                      <div className="trait-stat-grid">
-                        {[
-                          { label: "Growth left", value: activeCreature ? activeCreature.remainingGrowth : 0, detail: "points to adult" },
-                          { label: "Fast evolve", value: activeCreature?.fastEvolveCost ?? 0, detail: "xp for active body" },
-                          { label: "Kills", value: activeCreature?.killCount ?? 0, detail: "current body" },
-                          { label: "Egg draft", value: uiState.evolutionDraft?.modified ? "Ready" : "Empty", detail: draftIdentity },
-                        ].map((stat) => (
-                          <div key={stat.label} className="trait-stat">
-                            <span>{stat.label}</span>
-                            <strong>{stat.value}</strong>
-                            <small>{stat.detail}</small>
-                          </div>
-                        ))}
+                      <div className="species-summary-card">
+                        <span className="upgrade-slot">Next Egg</span>
+                        <strong>{uiState.evolutionDraft?.modified ? draftIdentity : "No new draft yet"}</strong>
+                        <small>
+                          Growth time
+                          {" "}
+                          {uiState.evolutionDraft?.maturityTarget ?? 0}
+                        </small>
+                      </div>
+                      <div className="species-summary-card">
+                        <span className="upgrade-slot">Population</span>
+                        <strong>
+                          {speciesCount}
+                          /6 alive
+                        </strong>
+                        <small>{uiState.rosterFull ? "Roster full" : "Switch bodies freely at the nest."}</small>
                       </div>
                     </div>
 
-                    <div className="editor-actions">
+                    <div className="species-actions">
                       <button
                         className="utility-btn"
                         type="button"
@@ -780,19 +687,25 @@ export function GameApp() {
                             </span>
                             <strong>{creature.identity}</strong>
                             <span>
-                              {creature.stage}
+                              {creature.stageLabel}
                               {" • "}
                               {creature.maturityPct}
                               % grown
-                              {" • "}
+                            </span>
+                            <span>{creature.maturationDetail}</span>
+                          </div>
+
+                          <div className="species-roster-meta">
+                            <span>
+                              {creature.active ? "Active body" : `${creature.remainingGrowth} growth left`}
+                            </span>
+                            <span>
                               {creature.killCount}
                               {" "}
                               kills
                             </span>
-                            <span className="upgrade-bonus">
-                              {creature.active ? "Active body" : `${creature.remainingGrowth} growth points left`}
-                            </span>
                           </div>
+
                           <div className="species-roster-actions">
                             {creature.canSwitch && (
                               <button className="utility-btn" type="button" onClick={() => gameRef.current?.switchSpeciesCreature(creature.id)}>

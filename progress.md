@@ -293,3 +293,49 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no full freeform Spore editor, breeding tree, or species-culling management screen
   - no major combat/ecosystem rewrite; the pass stayed focused on making evolution drive the existing loop
+
+## 2026-03-07 HUD Simplification + Evolution UX Pass
+
+- Current request: simplify the HUD and menus, keep DNA/XP/health/nest navigation/species population legible, make maturation easier to read, and make Creature Evolution feel like the premium center of the game instead of another utility panel.
+- Implemented:
+  - rebuilt `src/game/GameApp.jsx` around three gameplay anchors instead of the old multi-card spread:
+    - a compact lineage chip for maturation identity, DNA, XP, and species population
+    - a nest-route minimap in the top-right
+    - a bottom-left vitals/context strip where health is persistent and sprint/bite only appear contextually
+  - removed the live right-rail ecosystem stack, run-score utility bar, and quiet-window framing from normal play
+  - redesigned the nest overlay so `Creature Evolution` is the clear primary screen and `Species` is the secondary management tab
+  - grouped evolution choices into simple families (`Head`, `Mobility`, `Defense`, `Traits`) and added clearer strategic readouts:
+    - current body vs next egg
+    - four comparison stats (`Bite`, `Speed`, `Toughness`, `Growth Time`)
+    - per-upgrade growth-time tradeoff
+  - updated `src/game/SporeSliceGame.js` to emit display-focused HUD state:
+    - explicit `Baby/Adolescent/Fully Grown/Elder Boney Snapper` labels
+    - nest minimap data
+    - contextual sprint/attack visibility flags
+    - draft preview stats and growth-time deltas
+  - tightened `src/index.css` to match the simplified hierarchy and explicitly disabled pointer events on the gameplay HUD shell so canvas click-to-move still works through empty HUD space
+- Validation:
+  - `npm run build` passes after the HUD/menu pass
+  - shared web-game client captures:
+    - `output/web-game/ui-menu-pass-2`
+    - `output/web-game/ui-hud-pass-2`
+    - `output/web-game/ui-editor-pass-2`
+    - `output/web-game/ui-click-verify-3`
+  - visual inspection:
+    - confirmed the live HUD now reads as one small lineage card, one minimap card, one vitals stack, and one contextual action strip
+    - confirmed the attack meter no longer sits on screen idling at the safe nest
+    - confirmed the editor overlay now stands alone without the live HUD cluttering behind it
+    - confirmed the menu/start screen is simpler and the evolution editor feels more like a major moment than a debug panel
+  - deterministic browser checks on the local autostart build:
+    - `render_game_to_text()` now reports `hud.maturationLabel`, `hud.showSprintHud`, `hud.showAttackHud`, and nest distance for deterministic UI checks
+    - menu capture showed the simplified start card with no console errors
+    - gameplay capture at the nest showed the compact lineage/minimap/health layout with `showAttackHud: false`
+    - clicking the `Creature Evolution` button opened the redesigned nest overlay with `editorOpen: true` and `editorTab: "evolution"`
+    - a lower-right click-to-move burst still worked after the HUD rewrite:
+      - player moved from about `(-26, 22)` to about `(-28, 16.5)`
+      - a move target was present at about `(-30.5, 9.5)`
+      - nest distance rose to about `5.8`
+    - no browser console errors were reported
+- Scope protected:
+  - no new gameplay systems were added to justify the UI pass
+  - no pause/settings tree was introduced; the work stayed focused on simplifying the current live HUD and the existing nest flow

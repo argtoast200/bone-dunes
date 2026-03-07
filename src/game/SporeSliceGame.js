@@ -73,6 +73,12 @@ const NEWBORN_TRAIT_FLOOR = 0.38;
 const SPECIES_XP_PASSIVE_RATE = 0.52;
 const NEWBORN_GROWTH_PASSIVE_RATE = 1.14;
 const FAST_EVOLVE_COST_MULTIPLIER = 0.82;
+const SPRINT_HUD_HOLD = 1.15;
+const COMBAT_HUD_HOLD = 1.4;
+const HUD_MAP_RANGE = 26;
+const SPECIES_DISPLAY_NAME = "Boney Snapper";
+const BABY_STAGE_THRESHOLD = 0.35;
+const ELDER_KILL_TARGET = 8;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -675,6 +681,51 @@ function getFastEvolveCost(creature) {
   return Math.max(1, Math.ceil(computeRemainingMaturityPoints(creature) * FAST_EVOLVE_COST_MULTIPLIER));
 }
 
+function getCreatureMaturationDisplay(creature) {
+  const maturity = getCreatureMaturity(creature);
+  if (maturity < BABY_STAGE_THRESHOLD) {
+    const progress = clamp(maturity / BABY_STAGE_THRESHOLD, 0, 1);
+    return {
+      key: "baby",
+      label: `Baby ${SPECIES_DISPLAY_NAME}`,
+      progress,
+      detail: `${Math.round(progress * 100)}% to adolescent`,
+    };
+  }
+
+  if (maturity < 0.999) {
+    const progress = clamp((maturity - BABY_STAGE_THRESHOLD) / (1 - BABY_STAGE_THRESHOLD), 0, 1);
+    return {
+      key: "adolescent",
+      label: `Adolescent ${SPECIES_DISPLAY_NAME}`,
+      progress,
+      detail: `${Math.round(maturity * 100)}% to fully grown`,
+    };
+  }
+
+  const elderTargetTime = Math.max(18, computeCreatureMaturityTarget(creature) * 0.58);
+  const elderProgress = clamp(
+    Math.max((creature?.activeTime ?? 0) / elderTargetTime, (creature?.killCount ?? 0) / ELDER_KILL_TARGET),
+    0,
+    1,
+  );
+  if (elderProgress >= 0.999) {
+    return {
+      key: "elder",
+      label: `Elder ${SPECIES_DISPLAY_NAME}`,
+      progress: 1,
+      detail: "Line elder",
+    };
+  }
+
+  return {
+    key: "grown",
+    label: `Fully Grown ${SPECIES_DISPLAY_NAME}`,
+    progress: 1,
+    detail: "Season this body into an elder",
+  };
+}
+
 function getCreatureRuntimeState(creature) {
   const maturity = getCreatureMaturity(creature);
   const sizeScale = THREE.MathUtils.lerp(NEWBORN_SIZE_FLOOR, 1, maturity);
@@ -1244,6 +1295,8 @@ export class SporeSliceGame {
         dust: 0.4,
       },
       isSprinting: false,
+      sprintHudTimer: 0,
+      combatHudTimer: 0,
       groundMarker,
     };
   }
@@ -2480,6 +2533,7 @@ export class SporeSliceGame {
         this.resetEvolutionDraft();
       }
       this.state.editorOpen = true;
+      this.state.editorTab = "evolution";
       this.state.message = "Species nest open. Spend DNA on an egg plan, lay it, or switch to another body.";
     } else {
       if (!this.state.editorOpen) {
@@ -2514,7 +2568,13 @@ export class SporeSliceGame {
       const playerPosition = this.player.group.position;
       const currentTerritory = this.currentTerritory ?? this.getCurrentTerritoryForPosition(playerPosition);
       const activeCreature = this.getActiveCreature();
+      const activeMaturation = activeCreature ? getCreatureMaturationDisplay(activeCreature) : null;
       const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
+      const closestThreat = this.enemies
+        .filter((enemy) => enemy.deadTimer <= 0)
+        .reduce((closest, enemy) => Math.min(closest, getDistance2D(enemy.group.position, playerPosition)), Number.POSITIVE_INFINITY);
+      const nestDistance = Math.hypot(NEST_POSITION.x - playerPosition.x, NEST_POSITION.z - playerPosition.z);
+      const attackHudVisible = this.player.combatHudTimer > 0 || (Number.isFinite(closestThreat) && closestThreat < 11.5);
       const nearbyFoods = sortByDistance(playerPosition, this.foods.filter((food) => food.active), (food, distance) => ({
         id: food.id,
         x: Number(food.group.position.x.toFixed(1)),
@@ -2613,7 +2673,15 @@ export class SporeSliceGame {
           attackImpact: Number(this.player.attackImpact.toFixed(2)),
           identity: activeCreature ? buildCreatureIdentity(activeCreature.profile, activeCreature.traits) : buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
           stage: activeCreature ? describeCreatureStage(activeCreature.growth) : "Adult",
+          stageLabel: activeMaturation?.label ?? `Fully Grown ${SPECIES_DISPLAY_NAME}`,
           growth: activeCreature ? Number(activeCreature.growth.toFixed(3)) : 1,
+        },
+        hud: {
+          speciesName: SPECIES_DISPLAY_NAME,
+          maturationLabel: activeMaturation?.label ?? `Fully Grown ${SPECIES_DISPLAY_NAME}`,
+          showSprintHud: this.player.sprintHudTimer > 0.001,
+          showAttackHud: attackHudVisible,
+          nestDistance: Number(nestDistance.toFixed(1)),
         },
         moveTarget: this.moveTarget.active
           ? {
@@ -2900,6 +2968,8 @@ export class SporeSliceGame {
     this.player.turnMomentum = 0;
     this.player.dustTimer = 0;
     this.player.isSprinting = false;
+    this.player.sprintHudTimer = 0;
+    this.player.combatHudTimer = 0;
     this.player.group.scale.setScalar(this.player.baseScale);
     this.player.evolutionTimer = 0;
     this.player.evolutionTrait = null;
@@ -4218,6 +4288,9 @@ export class SporeSliceGame {
     const planarSpeed = this.player.velocity.length();
     const speedRatio = clamp(planarSpeed / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
     this.player.isSprinting = sprinting;
+    this.player.sprintHudTimer = sprinting ? SPRINT_HUD_HOLD : Math.max(0, this.player.sprintHudTimer - dt);
+    const attackHudActive = this.player.attackPhase !== "idle" || this.player.attackResultTimer > 0 || this.player.attackCooldown > 0.02;
+    this.player.combatHudTimer = attackHudActive ? COMBAT_HUD_HOLD : Math.max(0, this.player.combatHudTimer - dt);
 
     if (moving || hasAimDirection || this.player.attackLungeTimer > 0 || this.player.velocity.lengthSq() > 0.04 || this.player.attackPhase !== "idle") {
       const yawSource = this.player.attackPhase !== "idle"
@@ -4657,18 +4730,31 @@ export class SporeSliceGame {
   emitState() {
     const activeCreature = this.getActiveCreature();
     const activeRuntime = activeCreature ? getCreatureRuntimeState(activeCreature) : this.activeCreatureRuntime;
+    const activeMaturation = activeCreature
+      ? getCreatureMaturationDisplay(activeCreature)
+      : {
+          key: "grown",
+          label: `Fully Grown ${SPECIES_DISPLAY_NAME}`,
+          progress: 1,
+          detail: "Adult body online",
+        };
     const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
     const draftBaseCreature = this.getDraftBaseCreature();
     const draftModified = this.isDraftModified();
+    const draftStats = computePlayerStats(draft.traits, draft.profile);
+    const draftMaturityTarget = computeCreatureMaturityTarget(draft);
     const upgradeEntries = UPGRADE_DEFS.map((upgrade) => {
       const level = draft.traits[upgrade.key] ?? 0;
       const cost = upgrade.costs[level] ?? null;
+      const nextTraits = cost == null ? draft.traits : { ...draft.traits, [upgrade.key]: level + 1 };
+      const nextMaturityTarget = cost == null ? draftMaturityTarget : computeCreatureMaturityTarget({ traits: nextTraits, profile: draft.profile });
       return {
         ...upgrade,
         level,
         cost,
         summary: describeTraitLevel(upgrade.key, level),
         nextSummary: cost == null ? "Complete" : describeTraitLevel(upgrade.key, level + 1),
+        growthDelta: Math.max(0, nextMaturityTarget - draftMaturityTarget),
         maxed: cost == null,
         canBuy: this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
       };
@@ -4687,6 +4773,11 @@ export class SporeSliceGame {
     const closestThreat = this.enemies
       .filter((enemy) => enemy.deadTimer <= 0)
       .reduce((closest, enemy) => Math.min(closest, getDistance2D(enemy.group.position, this.player.group.position)), Number.POSITIVE_INFINITY);
+    const playerPosition = this.player.group.position;
+    const nestDx = NEST_POSITION.x - playerPosition.x;
+    const nestDz = NEST_POSITION.z - playerPosition.z;
+    const nestDistance = Math.hypot(nestDx, nestDz);
+    const attackHudVisible = this.player.combatHudTimer > 0 || (this.state.zone !== "nest" && Number.isFinite(closestThreat) && closestThreat < 8.5);
     const currentTerritory = this.currentTerritory ?? this.getCurrentTerritoryForPosition(this.player.group.position);
     const territorySpecies = currentTerritory ? SPECIES_DEFS[currentTerritory.speciesId] : null;
     const nearbySpecies = sortByDistance(
@@ -4716,11 +4807,15 @@ export class SporeSliceGame {
       const runtime = getCreatureRuntimeState(creature);
       const remainingPoints = computeRemainingMaturityPoints(creature);
       const fastEvolveCost = creature.growth >= 1 ? 0 : getFastEvolveCost(creature);
+      const maturation = getCreatureMaturationDisplay(creature);
       return {
         id: creature.id,
         identity: buildCreatureIdentity(creature.profile, creature.traits),
         generation: creature.generation,
         stage: describeCreatureStage(runtime.maturity),
+        stageLabel: maturation.label,
+        maturationTone: maturation.key,
+        maturationDetail: maturation.detail,
         maturity: Number(runtime.maturity.toFixed(3)),
         maturityPct: Math.round(runtime.maturity * 100),
         maturityTarget: runtime.maturityTarget,
@@ -4741,6 +4836,40 @@ export class SporeSliceGame {
     const activeStage = describeCreatureStage(activeRuntime.maturity);
     const rosterFull = this.saveData.speciesCreatures.length >= MAX_SPECIES_CREATURES;
     const activeMaturityRemaining = computeRemainingMaturityPoints(activeCreature);
+    const evolutionPreviewStats = [
+      {
+        key: "bite",
+        label: "Bite",
+        current: Math.round(this.playerStats.biteDamage),
+        next: Math.round(draftStats.biteDamage),
+        format: "flat",
+        better: "higher",
+      },
+      {
+        key: "speed",
+        label: "Speed",
+        current: Number(this.playerStats.speed.toFixed(1)),
+        next: Number(draftStats.speed.toFixed(1)),
+        format: "decimal",
+        better: "higher",
+      },
+      {
+        key: "toughness",
+        label: "Toughness",
+        current: Math.round(this.playerStats.health * (1 + this.playerStats.defense * 0.75)),
+        next: Math.round(draftStats.health * (1 + draftStats.defense * 0.75)),
+        format: "flat",
+        better: "higher",
+      },
+      {
+        key: "growth",
+        label: "Growth Time",
+        current: activeRuntime.maturityTarget,
+        next: draftMaturityTarget,
+        format: "flat",
+        better: "lower",
+      },
+    ];
 
     this.onStateChange?.({
       mode: this.state.mode,
@@ -4759,9 +4888,11 @@ export class SporeSliceGame {
       health: this.player.health,
       maxHealth: this.player.maxHealth,
       sprintCharge: this.player.sprintCharge,
+      showSprintHud: this.player.sprintHudTimer > 0.001,
       biteCharge: clamp(1 - this.player.attackCooldown / Math.max(0.01, this.playerStats.biteCooldown), 0, 1),
       attackPhase: this.player.attackPhase,
       attackResult: this.player.attackResult,
+      showAttackHud: attackHudVisible,
       surgeCharge: clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1),
       surgeLevel: this.surge.level,
       lowHealth: this.player.health <= this.player.maxHealth * LOW_HEALTH_THRESHOLD,
@@ -4789,10 +4920,32 @@ export class SporeSliceGame {
         : null,
       gamepadConnected: this.gamepad.connected,
       gamepadLabel: this.gamepad.label,
+      speciesName: SPECIES_DISPLAY_NAME,
+      maturationLabel: activeMaturation.label,
+      maturationTone: activeMaturation.key,
+      maturationProgress: Math.round(activeMaturation.progress * 100),
+      maturationDetail: activeMaturation.detail,
+      hudMap: {
+        range: HUD_MAP_RANGE,
+        worldRadius: WORLD_RADIUS,
+        player: {
+          x: Number(playerPosition.x.toFixed(1)),
+          z: Number(playerPosition.z.toFixed(1)),
+          yaw: Number(this.player.yaw.toFixed(3)),
+        },
+        nest: {
+          dx: Number(nestDx.toFixed(1)),
+          dz: Number(nestDz.toFixed(1)),
+          distance: Number(nestDistance.toFixed(1)),
+          bearing: Number(Math.atan2(nestDx, nestDz).toFixed(3)),
+          atNest: this.state.zone === "nest",
+        },
+      },
       nearbySpecies,
       nearbyNests,
       upgrades: draft.traits,
       upgradeEntries,
+      evolutionPreviewStats,
       editorOpen: this.state.editorOpen,
       editorTab: this.state.editorTab,
       editorPulse: this.player.evolutionTimer > 0 ? this.player.evolutionTimer / 1.45 : 0,
@@ -4821,6 +4974,9 @@ export class SporeSliceGame {
             identity,
             generation: activeCreature.generation,
             stage: activeStage,
+            stageLabel: activeMaturation.label,
+            maturationTone: activeMaturation.key,
+            maturationDetail: activeMaturation.detail,
             maturity: Number(activeRuntime.maturity.toFixed(3)),
             maturityPct: Math.round(activeRuntime.maturity * 100),
             maturityTarget: activeRuntime.maturityTarget,
@@ -4842,6 +4998,7 @@ export class SporeSliceGame {
           patternLabel: PATTERN_LABELS[draft.profile.patternType] ?? PATTERN_LABELS[0],
         },
         traitTotal: Math.round(getTraitTotal(draft.traits)),
+        maturityTarget: draftMaturityTarget,
       },
       controlsHint: this.gamepad.connected
         ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor"
