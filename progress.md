@@ -208,3 +208,41 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no separate controller-only movement system or alternate camera rewrite
   - reused the existing movement/combat/editor flows so controller support stays maintainable
+
+## 2026-03-07 Movement + Combat Weight Pass
+
+- Current request: make movement and attacks feel more physical, weighty, and believable without rewriting the game or expanding scope.
+- Audit before implementation:
+  - player velocity was still chasing targets too directly, so starts/stops felt input-driven instead of body-driven
+  - turning was too immediate for the creature size, which flattened the sense of mass
+  - bite phases existed, but the strike body motion and forward drive were still too light
+  - hits applied damage cleanly but momentum transfer between bodies was still too small
+  - camera and terrain were adding readability but not enough physical reinforcement
+- Implemented in `src/game/SporeSliceGame.js`:
+  - split player motion into controlled movement velocity plus decaying impulse velocity for heavier starts, stops, and hit carry
+  - added mass-aware movement stats, move-target slowdown, lighter coasting than a hard snap-stop, and turn-rate limits tied to creature mass
+  - added terrain response sampling for slope/sand slowdown plus sprint/run dust bursts
+  - added body lean, bank, and stronger attack posing so movement and bites read through the creature silhouette
+  - upgraded the bite to drive the whole body forward on strike, tighten the forward hit shape, and exchange more momentum with the target
+  - added player body-vs-creature collision push so sprinting into smaller creatures causes visible displacement instead of ghosting through space
+  - strengthened enemy reactions with recoil lift/tilt layered on top of stagger and impact pulse
+  - updated camera follow with momentum lag, sprint bob, and stronger attack push
+  - fixed virtual sprint input so deterministic/mobile-style input uses the same sprint path as keyboard/controller
+- Validation:
+  - `npm run build` passes after the pass
+  - shared web-game client captures:
+    - `output/web-game/weight-pass-1`
+    - `output/web-game/weight-pass-2`
+  - visual inspection:
+    - confirmed the live gameplay screenshots still render correctly after the movement rewrite
+    - confirmed bite recovery and the heavier posture still read clearly in the HUD/canvas capture
+  - deterministic browser checks on the local autostart build:
+    - movement hold for about `576ms` reached about `6.7` speed and traveled about `3.13` world units
+    - after releasing input, the creature still carried about `0.36` world units before settling instead of snapping dead
+    - sprint over the same hold traveled about `3.83` world units, reached about `8.92` speed, and drained sprint charge to about `63%`
+    - a controlled front-facing bite dropped a placed scavenger from `44` HP to `15`, displaced it about `0.6` world units, displaced the player about `0.33` world units, applied about `0.35s` stagger, and drove player impulse to about `9.11`
+    - attack timing still stepped through `windup -> strike -> recovery`
+    - no browser console errors beyond the React DevTools info banner
+- Scope protected:
+  - no physics engine, combo tree, or combat-system rewrite
+  - no save/progression changes beyond using existing stats to derive movement mass

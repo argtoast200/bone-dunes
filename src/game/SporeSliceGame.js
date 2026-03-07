@@ -25,13 +25,14 @@ const FIXED_STEP = 1 / 60;
 const PLAYER_HEIGHT = 2.2;
 const CAMERA_HEIGHT = 5.8;
 const CAMERA_DISTANCE = 10.5;
-const ATTACK_WINDUP_DURATION = 0.08;
-const ATTACK_STRIKE_DURATION = 0.09;
-const ATTACK_RECOVERY_DURATION = 0.16;
+const ATTACK_WINDUP_DURATION = 0.095;
+const ATTACK_STRIKE_DURATION = 0.11;
+const ATTACK_RECOVERY_DURATION = 0.19;
 const ATTACK_DURATION = ATTACK_WINDUP_DURATION + ATTACK_STRIKE_DURATION + ATTACK_RECOVERY_DURATION;
-const ATTACK_LUNGE_DURATION = 0.12;
-const ATTACK_LUNGE_SPEED = 11.8;
+const ATTACK_LUNGE_DURATION = 0.18;
+const ATTACK_LUNGE_SPEED = 10.8;
 const MOVE_TARGET_STOP_DISTANCE = 1.25;
+const MOVE_TARGET_SLOW_DISTANCE = 5.8;
 const CAMERA_SIDE_OFFSET = 1.35;
 const CAMERA_LOOKAHEAD = 0.22;
 const SPRINT_SPEED_BONUS = 1.32;
@@ -44,8 +45,8 @@ const FERAL_SURGE_MAX_TIMER = 8;
 const FERAL_SURGE_SPEED_BONUS = 0.07;
 const FERAL_SURGE_COOLDOWN_BONUS = 0.22;
 const FERAL_SURGE_RECOVERY_BONUS = 0.18;
-const IMPACT_SLOW_DURATION = 0.07;
-const KILL_IMPACT_SLOW_DURATION = 0.11;
+const IMPACT_SLOW_DURATION = 0.085;
+const KILL_IMPACT_SLOW_DURATION = 0.12;
 const CAMERA_FOV_KICK_DECAY = 7.5;
 const EDITOR_CAMERA_DISTANCE = 5.9;
 const EDITOR_CAMERA_HEIGHT = 3.2;
@@ -60,6 +61,8 @@ const ECOSYSTEM_EVENT_MAX_DELAY = 28;
 const NEST_ATTACK_RANGE = 4.9;
 const CARCASS_TTL = 18;
 const MAX_CARCASSES = 6;
+const PLAYER_TERRAIN_SAMPLE_RADIUS = 1.15;
+const PLAYER_DUST_INTERVAL = 0.08;
 const GAMEPAD_MOVE_DEADZONE = 0.18;
 const GAMEPAD_LOOK_DEADZONE = 0.22;
 const BLOCKED_BROWSER_KEYS = new Set([
@@ -83,6 +86,8 @@ const vectorB = new THREE.Vector3();
 const vectorC = new THREE.Vector3();
 const vectorD = new THREE.Vector3();
 const vectorE = new THREE.Vector3();
+const vectorF = new THREE.Vector3();
+const vectorG = new THREE.Vector3();
 const upVector = new THREE.Vector3(0, 1, 0);
 const TRAIT_LIMITS = Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.key, upgrade.costs.length]));
 const TRAIT_TITLES = {
@@ -107,6 +112,16 @@ function damp(current, target, smoothing, dt) {
 function dampVector(current, target, smoothing, dt) {
   const factor = 1 - Math.exp(-smoothing * dt);
   current.lerp(target, factor);
+}
+
+function moveVectorToward(current, target, maxDelta, workVector) {
+  const delta = workVector.subVectors(target, current);
+  const distance = delta.length();
+  if (distance <= maxDelta || distance <= 0.00001) {
+    current.copy(target);
+    return;
+  }
+  current.addScaledVector(delta, maxDelta / distance);
 }
 
 function getSpawnOffset(radius) {
@@ -146,6 +161,34 @@ function applyAxisDeadzone(value, deadzone) {
 
   const normalized = (magnitude - deadzone) / (1 - deadzone);
   return Math.sign(value) * clamp(normalized, 0, 1);
+}
+
+function sampleTerrainResponse(position, direction, output) {
+  const sample = PLAYER_TERRAIN_SAMPLE_RADIUS;
+  const gradientX = (
+    getTerrainHeight(position.x + sample, position.z)
+    - getTerrainHeight(position.x - sample, position.z)
+  ) / (sample * 2);
+  const gradientZ = (
+    getTerrainHeight(position.x, position.z + sample)
+    - getTerrainHeight(position.x, position.z - sample)
+  ) / (sample * 2);
+  const slope = clamp(Math.hypot(gradientX, gradientZ) * 2.1, 0, 1);
+  const sand = clamp(
+    Math.abs(Math.sin(position.x * 0.09 + position.z * 0.05) * 0.58 + Math.cos(position.z * 0.08 - position.x * 0.06) * 0.42),
+    0,
+    1,
+  );
+  const uphill = direction.lengthSq() > 0.0001
+    ? Math.max(0, direction.x * gradientX + direction.z * gradientZ) * 2.8
+    : 0;
+  output.slope = slope;
+  output.sand = sand;
+  output.uphill = uphill;
+  output.speedFactor = clamp(1 - slope * 0.16 - sand * 0.08 - uphill * 0.14, 0.74, 1);
+  output.traction = clamp(1 - slope * 0.18 - sand * 0.08, 0.68, 1);
+  output.dust = clamp(0.35 + sand * 0.4 + slope * 0.24 + uphill * 0.18, 0.2, 1);
+  return output;
 }
 
 function makeCreatureModel({
@@ -441,6 +484,8 @@ function createEnemy(type) {
     baseScale: profile.size,
     baseBackGlow: 0.08,
     baseMarkingGlow: 0.1,
+    mass: clamp(spec.scale * (spec.poise ?? 1) * (spec.family === "predator" ? 0.98 : spec.family === "scavenger" ? 0.82 : 0.68), 0.72, 2.8),
+    collisionRadius: spec.scale * (spec.family === "predator" ? 1.55 : 1.3),
     velocity: new THREE.Vector3(),
     direction: new THREE.Vector3(),
     state: "idle",
@@ -459,6 +504,8 @@ function createEnemy(type) {
     fleeTimer: 0,
     hitDirection: new THREE.Vector3(),
     threatGlow: 0,
+    recoilLift: 0,
+    recoilTilt: 0,
   };
   applyCreatureAppearance(enemy, enemy.traits, enemy.profile, {
     body: spec.color,
@@ -476,7 +523,14 @@ function getTraitLevels(saveData) {
   }, {});
 }
 
-function computePlayerStats(upgrades) {
+function computePlayerStats(upgrades, profile = null) {
+  const size = profile?.size ?? 1;
+  const mass = clamp(
+    1 + (size - 1) * 1.4 + upgrades.spikes * 0.15 + upgrades.jaw * 0.08 + upgrades.horns * 0.05 - upgrades.legs * 0.06,
+    0.84,
+    1.7,
+  );
+  const momentumScale = Math.pow(mass, 0.72);
   return {
     speed: PLAYER_BASE_STATS.speed * (1 + upgrades.legs * 0.1),
     health: PLAYER_BASE_STATS.health + upgrades.spikes * 16,
@@ -486,7 +540,17 @@ function computePlayerStats(upgrades) {
     defense: clamp(PLAYER_BASE_STATS.defense + upgrades.spikes * 0.09, 0, 0.3),
     intimidation: PLAYER_BASE_STATS.intimidation + upgrades.horns * 0.12 + upgrades.crest * 0.18,
     attackReach: 4.35 + upgrades.jaw * 0.28 + upgrades.horns * 0.18,
-    lungeSpeed: ATTACK_LUNGE_SPEED * (1 + upgrades.legs * 0.03 + upgrades.jaw * 0.02),
+    lungeSpeed: ATTACK_LUNGE_SPEED * (1 + upgrades.legs * 0.04 + upgrades.jaw * 0.03 + upgrades.tail * 0.04) / Math.pow(mass, 0.08),
+    mass,
+    acceleration: (32 + upgrades.legs * 2.2 + upgrades.tail * 0.7) / momentumScale,
+    braking: (29 + upgrades.legs * 1.9 + upgrades.tail * 1.05) / momentumScale,
+    coastDrag: (8.2 + upgrades.tail * 0.45) / momentumScale,
+    turnRate: (7.4 + upgrades.legs * 0.72 - upgrades.spikes * 0.14) / Math.pow(mass, 0.58),
+    attackDrive: (11 + upgrades.jaw * 0.65 + upgrades.horns * 0.45 + upgrades.tail * 0.5) / Math.pow(mass, 0.08),
+    attackCarry: 3.8 + upgrades.tail * 0.7 + upgrades.horns * 0.28,
+    collisionRadius: 1.7 * size + upgrades.spikes * 0.08,
+    bodyPush: 3.8 + upgrades.tail * 0.65 + upgrades.horns * 0.35 + upgrades.spikes * 0.25,
+    impactResist: 1 + upgrades.spikes * 0.14 + Math.max(0, size - 1) * 0.45,
   };
 }
 
@@ -838,7 +902,7 @@ export class SporeSliceGame {
       respawnTimer: 0,
     };
 
-    this.playerStats = computePlayerStats(this.state.upgrades);
+    this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
     this.input = {
       forward: false,
       backward: false,
@@ -877,6 +941,7 @@ export class SporeSliceGame {
     this.playerVelocity = new THREE.Vector3();
     this.cameraTarget = new THREE.Vector3();
     this.cameraGoal = new THREE.Vector3();
+    this.cameraMomentum = new THREE.Vector3();
     this.pointerNdc = new THREE.Vector2();
     this.raycaster = new THREE.Raycaster();
     this.moveTarget = {
@@ -1003,6 +1068,9 @@ export class SporeSliceGame {
     return {
       ...model,
       velocity: this.playerVelocity,
+      moveVelocity: new THREE.Vector3(),
+      impulseVelocity: new THREE.Vector3(),
+      previousVelocity: new THREE.Vector3(),
       yaw: Math.PI,
       health: this.playerStats.health,
       maxHealth: this.playerStats.health,
@@ -1021,6 +1089,7 @@ export class SporeSliceGame {
       hurtTint: 0,
       pickupPulse: 0,
       attackRecoil: 0,
+      attackImpact: 0,
       stepCycle: 0,
       attackSwingId: 0,
       baseScale: 1,
@@ -1028,6 +1097,19 @@ export class SporeSliceGame {
       baseMarkingGlow: 0.14,
       evolutionTimer: 0,
       evolutionTrait: null,
+      lean: 0,
+      bank: 0,
+      turnMomentum: 0,
+      dustTimer: 0,
+      terrain: {
+        slope: 0,
+        sand: 0,
+        uphill: 0,
+        speedFactor: 1,
+        traction: 1,
+        dust: 0.4,
+      },
+      isSprinting: false,
       groundMarker,
     };
   }
@@ -1532,6 +1614,17 @@ export class SporeSliceGame {
       rise,
       age: 0,
       size,
+    });
+  }
+
+  spawnGroundDust(position, { color = 0xd9b487, ttl = 0.2, size = 0.9, shards = 4, rise = 0.06 } = {}) {
+    this.spawnBurst(position.clone().setY(getTerrainHeight(position.x, position.z) + 0.28), {
+      color,
+      ttl,
+      size,
+      shards,
+      ring: false,
+      rise,
     });
   }
 
@@ -2101,6 +2194,7 @@ export class SporeSliceGame {
           z: Number(playerPosition.z.toFixed(1)),
           vx: Number(this.player.velocity.x.toFixed(2)),
           vz: Number(this.player.velocity.z.toFixed(2)),
+          speed: Number(this.player.velocity.length().toFixed(2)),
           yaw: Number(this.player.yaw.toFixed(2)),
           health: Number(this.player.health.toFixed(0)),
           maxHealth: Number(this.player.maxHealth.toFixed(0)),
@@ -2114,7 +2208,10 @@ export class SporeSliceGame {
           sprintCharge: Number(this.player.sprintCharge.toFixed(2)),
           surgeCharge: Number((this.surge.timer / FERAL_SURGE_MAX_TIMER).toFixed(2)),
           surgeLevel: this.surge.level,
-          sprinting: this.input.sprint,
+          sprinting: this.player.isSprinting,
+          terrainSlow: Number((1 - this.player.terrain.speedFactor).toFixed(2)),
+          mass: Number(this.playerStats.mass.toFixed(2)),
+          attackImpact: Number(this.player.attackImpact.toFixed(2)),
           identity: buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
         },
         moveTarget: this.moveTarget.active
@@ -2147,7 +2244,7 @@ export class SporeSliceGame {
   }
 
   updatePlayerStats() {
-    this.playerStats = computePlayerStats(this.state.upgrades);
+    this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
     const healthRatio = this.player.maxHealth > 0 ? this.player.health / this.player.maxHealth : 1;
     this.player.maxHealth = this.playerStats.health;
     this.player.health = clamp(this.playerStats.health * healthRatio, 0, this.player.maxHealth);
@@ -2336,6 +2433,9 @@ export class SporeSliceGame {
     const spawnY = getTerrainHeight(NEST_POSITION.x, NEST_POSITION.z) + PLAYER_HEIGHT;
     this.player.group.position.set(NEST_POSITION.x, spawnY, NEST_POSITION.z);
     this.player.velocity.set(0, 0, 0);
+    this.player.moveVelocity.set(0, 0, 0);
+    this.player.impulseVelocity.set(0, 0, 0);
+    this.player.previousVelocity.set(0, 0, 0);
     this.player.yaw = Math.PI;
     this.player.health = this.playerStats.health;
     this.player.maxHealth = this.playerStats.health;
@@ -2353,6 +2453,12 @@ export class SporeSliceGame {
     this.player.hurtTint = 0;
     this.player.pickupPulse = 0;
     this.player.attackRecoil = 0;
+    this.player.attackImpact = 0;
+    this.player.lean = 0;
+    this.player.bank = 0;
+    this.player.turnMomentum = 0;
+    this.player.dustTimer = 0;
+    this.player.isSprinting = false;
     this.player.group.scale.setScalar(this.player.baseScale);
     this.player.evolutionTimer = 0;
     this.player.evolutionTrait = null;
@@ -2360,6 +2466,7 @@ export class SporeSliceGame {
     this.clearFeralSurge();
     this.impactSlow = 0;
     this.cameraFovKick = 0;
+    this.cameraMomentum.set(0, 0, 0);
     this.clearMoveTarget();
 
     if (resettingAfterDeath) {
@@ -2393,6 +2500,8 @@ export class SporeSliceGame {
     enemy.staggerTimer = 0;
     enemy.fleeTimer = 0;
     enemy.threatGlow = 0;
+    enemy.recoilLift = 0;
+    enemy.recoilTilt = 0;
     enemy.targetCreatureId = null;
     enemy.targetFoodId = null;
     enemy.targetCarcassId = null;
@@ -2517,7 +2626,9 @@ export class SporeSliceGame {
       this.player.attackResultTimer = 0.22;
     }
     this.player.attackRecoil = Math.max(this.player.attackRecoil, this.player.health > 0 ? 0.56 : 0.9);
-    this.player.velocity.addScaledVector(sourceDirection, 4.8);
+    this.player.attackImpact = Math.max(this.player.attackImpact, this.player.health > 0 ? 0.5 : 0.78);
+    this.player.moveVelocity.multiplyScalar(0.38);
+    this.player.impulseVelocity.addScaledVector(sourceDirection, 6.2 / Math.max(0.85, this.playerStats.impactResist));
     this.setImpactPause(this.player.health > 0 ? 0.08 : 0.12, this.player.health > 0 ? 2.6 : 4.8);
     this.cameraShake = Math.max(this.cameraShake, this.player.health > 0 ? 0.18 : 0.34);
     this.spawnBurst(this.player.group.position, {
@@ -2525,6 +2636,12 @@ export class SporeSliceGame {
       ttl: this.player.health > 0 ? 0.45 : 0.65,
       size: this.player.health > 0 ? 1.2 : 1.8,
       shards: this.player.health > 0 ? 7 : 10,
+    });
+    this.spawnGroundDust(this.player.group.position, {
+      color: this.player.health > 0 ? 0xd88f68 : 0xb76c52,
+      ttl: this.player.health > 0 ? 0.18 : 0.26,
+      size: this.player.health > 0 ? 0.88 : 1.18,
+      shards: this.player.health > 0 ? 4 : 6,
     });
     this.state.message = this.player.health > 0
       ? "A creature tears into you. Fall back or finish the fight."
@@ -2558,17 +2675,20 @@ export class SporeSliceGame {
     enemy.impactPulse = enemy.hp <= 0 ? 1 : 0.82;
     enemy.threatGlow = 1;
     enemy.attackTelegraph = 0;
-    enemy.staggerTimer = enemy.hp <= 0 ? 0.28 : (enemy.type === "predator" ? 0.18 : 0.3) / (enemy.spec.poise ?? 1);
+    enemy.staggerTimer = enemy.hp <= 0 ? 0.34 : (enemy.type === "predator" ? 0.22 : enemy.type === "herbivore" ? 0.4 : 0.34) / (enemy.spec.poise ?? 1);
     enemy.fleeTimer = enemy.type !== "predator" && enemy.hp > 0 ? 0.48 : 0;
     enemy.cooldown = Math.max(enemy.cooldown, enemy.type === "predator" ? 0.55 : 0.42);
     if (sourceDirection) {
       enemy.hitDirection.copy(sourceDirection);
     }
+    enemy.recoilLift = Math.max(enemy.recoilLift, enemy.hp <= 0 ? 1 : enemy.type === "predator" ? 0.42 : enemy.type === "herbivore" ? 0.78 : 0.66);
+    enemy.recoilTilt = Math.max(enemy.recoilTilt, enemy.type === "predator" ? 0.34 : enemy.type === "herbivore" ? 0.58 : 0.48);
     enemy.state = enemy.type === "predator" ? "staggered" : enemy.type === "herbivore" ? "panicked" : "reeling";
     enemy.need = enemy.type === "predator" ? "defending" : "fleeing";
     enemy.targetCreatureId = sourceKind === "creature" && attacker ? attacker.group.userData.enemyId : null;
     if (sourceKind === "player") {
       this.player.attackRecoil = Math.max(this.player.attackRecoil, enemy.hp <= 0 ? 1 : 0.7);
+      this.player.attackImpact = Math.max(this.player.attackImpact, enemy.hp <= 0 ? 1 : enemy.type === "predator" ? 0.78 : 0.64);
       this.setImpactPause(
         enemy.hp <= 0 ? KILL_IMPACT_SLOW_DURATION : IMPACT_SLOW_DURATION,
         enemy.hp <= 0 ? 5.4 : 3.2,
@@ -2670,8 +2790,10 @@ export class SporeSliceGame {
     this.player.attackDidConnect = false;
     this.player.attackResult = "snap";
     this.player.attackResultTimer = 0.18;
-    this.player.attackRecoil = Math.max(this.player.attackRecoil, 0.48);
-    this.cameraFovKick = Math.max(this.cameraFovKick, 1.2);
+    this.player.attackRecoil = Math.max(this.player.attackRecoil, 0.52);
+    this.player.attackImpact = 0;
+    this.player.impulseVelocity.multiplyScalar(0.76);
+    this.cameraFovKick = Math.max(this.cameraFovKick, 1.45);
     this.player.attackSwingId += 1;
 
     const lockedTarget = this.findAttackTarget();
@@ -2696,19 +2818,27 @@ export class SporeSliceGame {
     }
     const playerPosition = this.player.group.position;
     const biteReachBonus = this.state.upgrades.jaw * 0.12 + this.state.upgrades.horns * 0.05;
-    const mouthPosition = playerPosition.clone().addScaledVector(forward, 2.05 + biteReachBonus);
+    const biteRange = this.playerStats.attackReach + (this.state.upgrades.horns > 0 ? 0.1 : 0);
+    const biteWidth = 1.38 + this.state.upgrades.jaw * 0.09 + this.state.upgrades.horns * 0.08;
+    const mouthPosition = playerPosition.clone().addScaledVector(forward, 2.2 + biteReachBonus);
 
     this.spawnAttackArc(mouthPosition, this.player.yaw, {
       color: 0xffe1b0,
-      ttl: 0.18,
-      size: 1 + this.state.upgrades.jaw * 0.08 + this.state.upgrades.horns * 0.05,
+      ttl: 0.2,
+      size: 1.08 + this.state.upgrades.jaw * 0.1 + this.state.upgrades.horns * 0.06,
     });
     this.spawnBurst(mouthPosition, {
       color: 0xffcb8f,
-      ttl: 0.18,
-      size: 0.72 + this.state.upgrades.jaw * 0.04,
-      shards: 5,
+      ttl: 0.2,
+      size: 0.82 + this.state.upgrades.jaw * 0.05,
+      shards: 6,
       rise: 0.12,
+    });
+    this.spawnGroundDust(mouthPosition, {
+      color: 0xcf9f73,
+      ttl: 0.18,
+      size: 0.78 + this.state.upgrades.tail * 0.05,
+      shards: 4,
     });
 
     let hitCount = 0;
@@ -2721,21 +2851,29 @@ export class SporeSliceGame {
 
       vectorA.subVectors(enemy.group.position, playerPosition);
       const horizontalDistance = Math.hypot(vectorA.x, vectorA.z);
-      const range = enemy.type === "predator" ? this.playerStats.attackReach + 0.55 : this.playerStats.attackReach;
-      if (horizontalDistance > range) {
+      const range = enemy.type === "predator" ? biteRange + 0.62 : biteRange;
+      if (horizontalDistance > range + 0.85 || horizontalDistance <= 0.0001) {
         return;
       }
 
       vectorA.y = 0;
-      vectorA.normalize();
-      const dot = vectorA.dot(forward);
-      const dotThreshold = horizontalDistance < 2.35 ? -0.18 : 0.12;
-      if (dot < dotThreshold) {
+      const forwardDistance = vectorA.dot(forward);
+      if (forwardDistance <= 0.35 || forwardDistance > range + 0.7) {
+        return;
+      }
+      const lateralDistance = Math.abs(vectorA.x * forward.z - vectorA.z * forward.x);
+      const lateralAllowance = biteWidth + Math.max(0, forwardDistance - 2.1) * 0.16 + (enemy.type === "predator" ? 0.18 : 0);
+      if (lateralDistance > lateralAllowance) {
         return;
       }
 
-      const impactDirection = vectorC.copy(forward).multiplyScalar((enemy.type === "predator" ? 5.2 : 7.2) * this.playerStats.knockback);
-      enemy.velocity.addScaledVector(impactDirection, 1);
+      const massRatio = clamp(this.playerStats.mass / Math.max(0.7, enemy.mass), 0.58, 1.65);
+      const impactStrength = (enemy.type === "predator" ? 5.6 : enemy.type === "herbivore" ? 8.8 : 7.9) * this.playerStats.knockback * massRatio;
+      enemy.velocity.addScaledVector(vectorC.copy(forward), impactStrength / Math.max(0.85, enemy.mass));
+      this.player.impulseVelocity.addScaledVector(forward, this.playerStats.attackCarry * (enemy.type === "predator" ? 0.08 : 0.16));
+      if (enemy.type === "predator") {
+        this.player.impulseVelocity.addScaledVector(forward, -enemy.mass * 0.16);
+      }
       const result = this.damageEnemy(enemy, this.playerStats.biteDamage, forward);
       hitCount += 1;
       killedTarget = killedTarget || result.killed;
@@ -2777,12 +2915,15 @@ export class SporeSliceGame {
       this.player.attackDidConnect = true;
       this.player.attackResult = "hit";
       this.player.attackResultTimer = 0.24;
+      this.player.attackImpact = Math.max(this.player.attackImpact, 0.46);
       this.setImpactPause(0.05, 1.8, 0.1);
       return;
     }
 
     this.player.attackResult = "miss";
     this.player.attackResultTimer = 0.2;
+    this.player.attackImpact = Math.max(this.player.attackImpact, 0.28);
+    this.player.impulseVelocity.addScaledVector(forward, this.playerStats.attackCarry * 0.12);
     this.spawnBurst(mouthPosition.clone().setY(getTerrainHeight(mouthPosition.x, mouthPosition.z) + 0.28), {
       color: 0xe6c49c,
       ttl: 0.16,
@@ -2791,6 +2932,55 @@ export class SporeSliceGame {
       ring: false,
       rise: 0.04,
     });
+  }
+
+  resolvePlayerBodyCollisions() {
+    const playerPosition = this.player.group.position;
+    const playerMass = this.playerStats.mass;
+    const playerRadius = this.playerStats.collisionRadius;
+
+    this.enemies.forEach((enemy) => {
+      if (enemy.deadTimer > 0) {
+        return;
+      }
+
+      vectorA.subVectors(enemy.group.position, playerPosition).setY(0);
+      const distance = vectorA.length();
+      const minimumDistance = playerRadius + enemy.collisionRadius;
+      if (distance <= 0.0001 || distance >= minimumDistance) {
+        return;
+      }
+
+      vectorA.divideScalar(distance);
+      const overlap = minimumDistance - distance;
+      const totalMass = playerMass + enemy.mass;
+      const playerPush = overlap * (enemy.mass / totalMass) * 0.55;
+      const enemyPush = overlap * (playerMass / totalMass) * 0.82;
+
+      playerPosition.addScaledVector(vectorA, -playerPush);
+      enemy.group.position.addScaledVector(vectorA, enemyPush);
+      enemy.group.position.y = getTerrainHeight(enemy.group.position.x, enemy.group.position.z) + enemy.spec.yOffset;
+
+      const closingSpeed = Math.max(0, this.player.velocity.dot(vectorA) - enemy.velocity.dot(vectorA));
+      if (closingSpeed > 4.2) {
+        const shove = Math.min(7.2, closingSpeed * 0.55 + overlap * 3);
+        enemy.velocity.addScaledVector(vectorA, shove * this.playerStats.bodyPush / (enemy.mass * 6.8));
+        this.player.impulseVelocity.addScaledVector(vectorA, -shove / (playerMass * 11.5));
+        enemy.hitDirection.copy(vectorA);
+        enemy.impactPulse = Math.max(enemy.impactPulse, 0.24);
+        enemy.recoilLift = Math.max(enemy.recoilLift, enemy.type === "predator" ? 0.16 : 0.28);
+        if (this.player.isSprinting && enemy.type !== "predator") {
+          enemy.staggerTimer = Math.max(enemy.staggerTimer, 0.08);
+        }
+      }
+
+      enemy.group.position.x = clamp(enemy.group.position.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+      enemy.group.position.z = clamp(enemy.group.position.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+    });
+
+    playerPosition.x = clamp(playerPosition.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+    playerPosition.z = clamp(playerPosition.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
+    playerPosition.y = getTerrainHeight(playerPosition.x, playerPosition.z) + PLAYER_HEIGHT + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
   }
 
   updateFood(dt) {
@@ -2907,6 +3097,8 @@ export class SporeSliceGame {
       enemy.staggerTimer = Math.max(0, enemy.staggerTimer - dt);
       enemy.fleeTimer = Math.max(0, enemy.fleeTimer - dt);
       enemy.threatGlow = Math.max(0, enemy.threatGlow - dt * 2.5);
+      enemy.recoilLift = Math.max(0, enemy.recoilLift - dt * 3.8);
+      enemy.recoilTilt = Math.max(0, enemy.recoilTilt - dt * 4.6);
       enemy.interactionCooldown = Math.max(0, enemy.interactionCooldown - dt);
       enemy.grazeTimer = Math.max(0, enemy.grazeTimer - dt);
       enemy.territoryAlert = Math.max(0, enemy.territoryAlert - dt * 0.42);
@@ -3360,10 +3552,24 @@ export class SporeSliceGame {
       const staggerStrength = enemy.staggerTimer > 0 ? Math.min(1, enemy.staggerTimer / (enemy.type === "predator" ? 0.18 : 0.3)) : 0;
       const pressureGlow = enemy.territoryAlert * 0.16 + (nextNeed === "migrating" ? 0.08 : 0) + (nextNeed === "hunting" || nextNeed === "defending" ? 0.12 : 0);
       const fleeLean = nextNeed === "fleeing" ? 0.12 : 0;
-      enemy.refs.body.position.z = -telegraphStrength * 0.14 - staggerStrength * 0.18 + pressureGlow * 0.08 - fleeLean * 0.08;
-      enemy.refs.back.position.z = -0.7 - telegraphStrength * 0.08 + staggerStrength * 0.06 + pressureGlow * 0.04;
-      enemy.refs.headPivot.rotation.x = Math.sin(gait * 0.35) * 0.08 - telegraphStrength * 0.2 - staggerStrength * 0.24 + fleeLean * 0.08;
-      enemy.refs.tailGroup.rotation.x = Math.sin(gait * 0.5) * 0.18 + telegraphStrength * 0.12 + staggerStrength * 0.18 + fleeLean * 0.12;
+      const hitYawOffset = enemy.hitDirection.lengthSq() > 0.001
+        ? normalizeAngle(Math.atan2(enemy.hitDirection.x, enemy.hitDirection.z) - enemy.group.rotation.y)
+        : 0;
+      const hitLateral = Math.sin(hitYawOffset) * enemy.recoilTilt;
+      enemy.refs.body.position.x = hitLateral * 0.2;
+      enemy.refs.body.position.y = enemy.recoilLift * (enemy.type === "predator" ? 0.08 : 0.12);
+      enemy.refs.body.position.z = -telegraphStrength * 0.14 - staggerStrength * 0.18 - enemy.recoilLift * 0.2 + pressureGlow * 0.08 - fleeLean * 0.08;
+      enemy.refs.back.position.x = hitLateral * 0.14;
+      enemy.refs.back.position.z = -0.7 - telegraphStrength * 0.08 + staggerStrength * 0.06 - enemy.recoilLift * 0.08 + pressureGlow * 0.04;
+      enemy.refs.body.rotation.x = telegraphStrength * 0.12 - enemy.recoilLift * 0.18 - fleeLean * 0.1;
+      enemy.refs.body.rotation.z = hitLateral * 0.18;
+      enemy.refs.back.rotation.x = telegraphStrength * 0.06 - enemy.recoilLift * 0.08;
+      enemy.refs.back.rotation.z = hitLateral * 0.1;
+      enemy.refs.headPivot.position.x = hitLateral * 0.2;
+      enemy.refs.headPivot.rotation.x = Math.sin(gait * 0.35) * 0.08 - telegraphStrength * 0.2 - staggerStrength * 0.24 - enemy.recoilLift * 0.14 + fleeLean * 0.08;
+      enemy.refs.headPivot.rotation.z = hitLateral * 0.28 + staggerStrength * 0.08;
+      enemy.refs.tailGroup.rotation.x = Math.sin(gait * 0.5) * 0.18 + telegraphStrength * 0.12 + staggerStrength * 0.18 + fleeLean * 0.12 + enemy.recoilLift * 0.08;
+      enemy.refs.tailGroup.rotation.z = -hitLateral * 0.14;
       enemy.refs.materials.skin.emissive.setRGB(
         enemy.hitFlash * 0.8 + telegraphStrength * 0.8 + enemy.threatGlow * 0.18 + pressureGlow * 0.55,
         enemy.hitFlash * 0.25 + telegraphStrength * 0.2 + pressureGlow * 0.18,
@@ -3401,6 +3607,7 @@ export class SporeSliceGame {
     }
 
     this.runStats.timeAlive += dt;
+    this.player.previousVelocity.copy(this.player.velocity);
     const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
     const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
     const editorLocked = this.state.editorOpen;
@@ -3417,6 +3624,7 @@ export class SporeSliceGame {
     const hasGamepadAim = !editorLocked && (Math.abs(this.gamepad.lookX) > 0.001 || Math.abs(this.gamepad.lookY) > 0.001);
     const desiredDirection = vectorA.set(0, 0, 0);
     const aimDirection = vectorE.set(0, 0, 0);
+    let targetSlowdown = 1;
     let moving = false;
     let hasAimDirection = false;
 
@@ -3454,6 +3662,13 @@ export class SporeSliceGame {
       } else {
         desiredDirection.divideScalar(distanceToTarget);
         moving = true;
+        if (distanceToTarget < MOVE_TARGET_SLOW_DISTANCE) {
+          targetSlowdown = clamp(
+            (distanceToTarget - MOVE_TARGET_STOP_DISTANCE) / Math.max(0.1, MOVE_TARGET_SLOW_DISTANCE - MOVE_TARGET_STOP_DISTANCE),
+            0.26,
+            1,
+          );
+        }
       }
     }
 
@@ -3472,6 +3687,20 @@ export class SporeSliceGame {
         this.player.attackPhase = "strike";
         this.player.attackPhaseTimer = ATTACK_STRIKE_DURATION;
         this.player.attackLungeTimer = ATTACK_LUNGE_DURATION;
+        this.player.moveVelocity.multiplyScalar(0.72);
+        this.player.impulseVelocity.addScaledVector(this.player.attackDirection, this.playerStats.attackDrive);
+        this.player.attackImpact = Math.max(this.player.attackImpact, 0.34);
+        this.cameraFovKick = Math.max(this.cameraFovKick, 2.2);
+        this.cameraShake = Math.max(this.cameraShake, 0.08);
+        this.spawnGroundDust(
+          vectorF.copy(this.player.group.position).addScaledVector(this.player.attackDirection, 0.75),
+          {
+            color: 0xcf9d72,
+            ttl: 0.18,
+            size: 0.72 + this.state.upgrades.tail * 0.05,
+            shards: 4,
+          },
+        );
         if (!this.player.attackResolved) {
           this.resolvePlayerAttack();
           this.player.attackResolved = true;
@@ -3487,7 +3716,7 @@ export class SporeSliceGame {
       }
     }
 
-    const sprinting = !editorLocked && (this.input.sprint || this.gamepad.sprint) && moving && this.player.sprintCharge > 0.05;
+    const sprinting = !editorLocked && (this.input.sprint || this.virtualInput.sprint || this.gamepad.sprint) && moving && this.player.sprintCharge > 0.05;
     if (sprinting) {
       this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE);
     } else {
@@ -3497,22 +3726,45 @@ export class SporeSliceGame {
 
     const sprintBonus = sprinting ? SPRINT_SPEED_BONUS : 1;
     const attackMoveFactor = this.player.attackPhase === "windup"
-      ? 0.58
+      ? 0.42
       : this.player.attackPhase === "strike"
-        ? 0.18
+        ? 0.08
         : this.player.attackPhase === "recovery"
-          ? 0.72
+          ? 0.62
           : 1;
-    const desiredSpeed = moving ? this.playerStats.speed * sprintBonus * (1 + surgePower * FERAL_SURGE_SPEED_BONUS) * attackMoveFactor : 0;
-    const desiredVelocity = vectorD.copy(desiredDirection).multiplyScalar(desiredSpeed);
+    const terrainDirection = moving
+      ? vectorF.copy(desiredDirection)
+      : this.player.velocity.lengthSq() > 0.001
+        ? vectorF.copy(this.player.velocity).setY(0).normalize()
+        : vectorF.set(0, 0, 0);
+    sampleTerrainResponse(this.player.group.position, terrainDirection, this.player.terrain);
+    const desiredSpeed = moving
+      ? this.playerStats.speed * sprintBonus * (1 + surgePower * FERAL_SURGE_SPEED_BONUS) * attackMoveFactor * this.player.terrain.speedFactor * targetSlowdown
+      : 0;
+    const targetMoveVelocity = vectorD.copy(desiredDirection).multiplyScalar(desiredSpeed);
 
-    this.player.attackLungeTimer = Math.max(0, this.player.attackLungeTimer - dt);
-    if (this.player.attackLungeTimer > 0) {
-      vectorB.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
-      desiredVelocity.addScaledVector(vectorB, this.playerStats.lungeSpeed * (this.player.attackLungeTimer / ATTACK_LUNGE_DURATION));
+    if (moving) {
+      const sameHeading = this.player.moveVelocity.lengthSq() <= 0.001 || this.player.moveVelocity.dot(targetMoveVelocity) >= 0;
+      const accelerationRate = (sameHeading ? this.playerStats.acceleration : this.playerStats.braking) * this.player.terrain.traction;
+      moveVectorToward(this.player.moveVelocity, targetMoveVelocity, accelerationRate * dt, vectorG);
+    } else {
+      moveVectorToward(this.player.moveVelocity, vectorG.set(0, 0, 0), (this.playerStats.braking * 0.72 + this.playerStats.coastDrag * 0.6) * dt, vectorF);
+      if (this.player.moveVelocity.lengthSq() > 0.0001) {
+        this.player.moveVelocity.multiplyScalar(Math.exp(-this.playerStats.coastDrag * dt));
+      }
+      if (this.player.moveVelocity.lengthSq() < 0.0004) {
+        this.player.moveVelocity.set(0, 0, 0);
+      }
     }
 
-    dampVector(this.player.velocity, desiredVelocity, moving ? (sprinting ? 18 : 14) : 8, dt);
+    this.player.attackLungeTimer = Math.max(0, this.player.attackLungeTimer - dt);
+    const impulseDecay = this.player.attackPhase === "strike" ? 9 : this.player.attackPhase === "recovery" ? 10.5 : 12.5;
+    dampVector(this.player.impulseVelocity, vectorG.set(0, 0, 0), impulseDecay, dt);
+    this.player.velocity.copy(this.player.moveVelocity).add(this.player.impulseVelocity);
+
+    const planarSpeed = this.player.velocity.length();
+    const speedRatio = clamp(planarSpeed / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
+    this.player.isSprinting = sprinting;
 
     if (moving || hasAimDirection || this.player.attackLungeTimer > 0 || this.player.velocity.lengthSq() > 0.04 || this.player.attackPhase !== "idle") {
       const yawSource = this.player.attackPhase !== "idle"
@@ -3524,7 +3776,12 @@ export class SporeSliceGame {
           : desiredDirection;
       const desiredYaw = Math.atan2(yawSource.x, yawSource.z);
       const yawDelta = normalizeAngle(desiredYaw - this.player.yaw);
-      this.player.yaw = normalizeAngle(this.player.yaw + yawDelta * (1 - Math.exp(-16 * dt)));
+      const maxTurn = this.playerStats.turnRate * (0.78 + speedRatio * 0.52) * (this.player.attackPhase === "strike" ? 0.62 : this.player.attackPhase === "windup" ? 0.82 : 1) * dt;
+      const appliedTurn = clamp(yawDelta, -maxTurn, maxTurn);
+      this.player.yaw = normalizeAngle(this.player.yaw + appliedTurn);
+      this.player.turnMomentum = damp(this.player.turnMomentum, appliedTurn / Math.max(0.0001, maxTurn), 10, dt);
+    } else {
+      this.player.turnMomentum = damp(this.player.turnMomentum, 0, 8, dt);
     }
 
     this.player.group.position.addScaledVector(this.player.velocity, dt);
@@ -3532,12 +3789,45 @@ export class SporeSliceGame {
     this.player.group.position.z = clamp(this.player.group.position.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
     this.player.group.position.y = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
     this.player.group.rotation.y = this.player.yaw;
+    this.player.lean = damp(
+      this.player.lean,
+      clamp(this.player.velocity.dot(vectorF.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw))) / Math.max(0.1, this.playerStats.speed * 1.15), -1, 1),
+      7.5,
+      dt,
+    );
+    this.player.bank = damp(
+      this.player.bank,
+      clamp(-this.player.velocity.dot(vectorG.set(Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw))) / Math.max(0.1, this.playerStats.speed * 0.95) + this.player.turnMomentum * 0.36, -1, 1),
+      9.5,
+      dt,
+    );
 
-    this.player.stepCycle += this.player.velocity.length() * dt * 0.7;
+    this.player.stepCycle += planarSpeed * dt * 0.7;
     const step = this.player.stepCycle * 10.5;
     this.player.refs.legPivots.forEach((leg, index) => {
-      leg.rotation.x = Math.sin(step + index * Math.PI * 0.9) * Math.min(0.62, this.player.velocity.length() * 0.045);
+      leg.rotation.x = Math.sin(step + index * Math.PI * 0.9) * Math.min(0.62, planarSpeed * 0.045 + this.player.attackImpact * 0.05);
     });
+
+    this.player.dustTimer = Math.max(0, this.player.dustTimer - dt);
+    if (
+      !editorLocked
+      && planarSpeed > this.playerStats.speed * (sprinting ? 0.78 : 0.58)
+      && this.player.dustTimer <= 0
+    ) {
+      const dustDirection = this.player.velocity.lengthSq() > 0.001
+        ? vectorG.copy(this.player.velocity).normalize()
+        : vectorG.set(0, 0, -1);
+      this.spawnGroundDust(
+        vectorF.copy(this.player.group.position).addScaledVector(dustDirection, -0.46),
+        {
+          color: this.state.zone === "danger" ? 0xca865f : 0xd8b287,
+          ttl: sprinting ? 0.22 : 0.16,
+          size: 0.62 + this.player.terrain.dust * 0.28 + (sprinting ? 0.18 : 0),
+          shards: sprinting ? 5 : 3,
+        },
+      );
+      this.player.dustTimer = PLAYER_DUST_INTERVAL / Math.max(0.45, this.player.terrain.dust);
+    }
 
     this.player.attackTimer = Math.max(0, this.player.attackTimer - dt);
     this.player.attackCooldown = Math.max(0, this.player.attackCooldown - dt * (1 + surgePower * FERAL_SURGE_COOLDOWN_BONUS));
@@ -3545,6 +3835,7 @@ export class SporeSliceGame {
     this.player.hurtTint = Math.max(0, this.player.hurtTint - dt * 1.6);
     this.player.pickupPulse = Math.max(0, this.player.pickupPulse - dt * 2.4);
     this.player.attackRecoil = Math.max(0, this.player.attackRecoil - dt * 4.8);
+    this.player.attackImpact = Math.max(0, this.player.attackImpact - dt * 5.4);
     this.player.evolutionTimer = Math.max(0, this.player.evolutionTimer - dt);
     if (this.player.evolutionTimer <= 0) {
       this.player.evolutionTrait = null;
@@ -3572,19 +3863,30 @@ export class SporeSliceGame {
         : this.player.attackPhase === "recovery"
           ? recoveryStrength * 0.32
           : 0;
-    const speedRatio = clamp(this.player.velocity.length() / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
-    const biteSnap = jawOpen + this.player.attackRecoil * 0.9 + strikeStrength * 0.3;
-    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.8 + this.player.attackRecoil * 0.14;
-    this.player.refs.headPivot.position.z = 2.1 - windupStrength * 0.38 + strikeStrength * 0.48 - recoveryStrength * 0.14;
-    this.player.refs.headPivot.position.y = 0.35 + windupStrength * 0.06 - strikeStrength * 0.08;
-    this.player.refs.body.position.z = -windupStrength * 0.24 + strikeStrength * 0.18;
-    this.player.refs.body.position.y = -windupStrength * 0.08 + strikeStrength * 0.05;
-    this.player.refs.back.position.z = -0.7 - windupStrength * 0.08 + strikeStrength * 0.06;
-    this.player.refs.headPivot.rotation.x = jawOpen * -0.34 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.05 - this.player.attackRecoil * 0.15 - windupStrength * 0.24 + strikeStrength * 0.34;
-    this.player.refs.tailGroup.rotation.x = Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.16 + speedRatio * 0.08 + surgeCharge * 0.08 + windupStrength * 0.08 - strikeStrength * 0.14;
-    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16;
+    const strikeArc = this.player.attackPhase === "strike" ? Math.sin(attackPhaseStrength * Math.PI) : 0;
+    const recoverArc = this.player.attackPhase === "recovery" ? attackPhaseStrength : 0;
+    const biteSnap = jawOpen + this.player.attackRecoil * 0.9 + strikeArc * 0.4 + this.player.attackImpact * 0.55;
+    const readyPulse = this.player.attackPhase === "idle" && this.player.attackCooldown <= 0.02 ? Math.sin(this.elapsed * 8.5) * 0.5 + 0.5 : 0;
+    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.95 + this.player.attackRecoil * 0.14 + this.player.attackImpact * 0.12;
+    this.player.refs.headPivot.position.z = 2.1 - windupStrength * 0.58 + strikeArc * 0.82 + recoverArc * 0.18;
+    this.player.refs.headPivot.position.y = 0.35 + windupStrength * 0.08 - strikeArc * 0.14 + this.player.attackImpact * 0.04;
+    this.player.refs.headPivot.position.x = this.player.bank * 0.16;
+    this.player.refs.body.position.z = -windupStrength * 0.34 + strikeArc * 0.28 - recoverArc * 0.05;
+    this.player.refs.body.position.y = -windupStrength * 0.12 + strikeArc * 0.08 - this.player.lean * 0.04;
+    this.player.refs.body.position.x = -this.player.bank * 0.12;
+    this.player.refs.back.position.z = -0.7 - windupStrength * 0.14 + strikeArc * 0.08;
+    this.player.refs.body.rotation.x = -this.player.lean * 0.14 + windupStrength * 0.2 - strikeArc * 0.28 + recoverArc * 0.08;
+    this.player.refs.body.rotation.z = this.player.bank * 0.16;
+    this.player.refs.back.rotation.x = -this.player.lean * 0.08 + windupStrength * 0.1 - strikeArc * 0.14;
+    this.player.refs.back.rotation.z = this.player.bank * 0.12;
+    this.player.refs.headPivot.rotation.x = jawOpen * -0.36 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.06 - this.player.attackRecoil * 0.15 - windupStrength * 0.28 + strikeArc * 0.46 + recoverArc * 0.1;
+    this.player.refs.headPivot.rotation.z = this.player.bank * 0.12 + this.player.attackImpact * 0.05;
+    this.player.refs.tailGroup.rotation.x = Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.2 + speedRatio * 0.1 + surgeCharge * 0.08 + windupStrength * 0.12 - strikeArc * 0.18 + recoverArc * 0.08;
+    this.player.refs.tailGroup.rotation.z = -this.player.bank * 0.12;
+    this.player.group.rotation.z = this.player.bank * 0.1;
+    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16 + readyPulse * 0.08;
     this.player.groundMarker.rotation.z += dt * (0.35 + speedRatio * 0.6);
-    this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12 + surgeCharge * 0.14);
+    this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12 + surgeCharge * 0.14 + readyPulse * 0.05);
 
     const tintStrength = this.player.hurtTint;
     const feralGlow = surgeCharge * (0.45 + surgePower * 0.08);
@@ -3598,9 +3900,9 @@ export class SporeSliceGame {
     this.player.refs.materials.accent.emissiveIntensity = this.player.baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08 + evolutionPulse * 0.55;
     this.player.refs.materials.markings.emissiveIntensity = this.player.baseMarkingGlow + feralGlow * 0.55 + evolutionPulse * 0.85;
     this.player.group.scale.set(
-      this.player.baseScale * (1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.04 + strikeStrength * 0.07 + evolutionPulse * 0.02),
-      this.player.baseScale * (1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02 - windupStrength * 0.05 + strikeStrength * 0.02 - evolutionPulse * 0.01),
-      this.player.baseScale * (1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.06 + strikeStrength * 0.1 + evolutionPulse * 0.03),
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.05 + strikeArc * 0.09 + evolutionPulse * 0.02),
+      this.player.baseScale * (1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02 - windupStrength * 0.06 + strikeArc * 0.03 - evolutionPulse * 0.01),
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.08 + strikeArc * 0.12 + evolutionPulse * 0.03),
     );
 
     this.state.zone = getZoneName(this.player.group.position);
@@ -3625,8 +3927,17 @@ export class SporeSliceGame {
     const speedFactor = clamp(this.player.velocity.length() / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
     const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
     const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
-    const forwardOffset = vectorA.copy(this.player.velocity).multiplyScalar(CAMERA_LOOKAHEAD);
+    const attackCameraPush = this.player.attackPhase === "strike"
+      ? 1 - this.player.attackPhaseTimer / ATTACK_STRIKE_DURATION
+      : this.player.attackPhase === "recovery"
+        ? 0.3
+        : 0;
+    const accelerationOffset = vectorF.copy(this.player.velocity).sub(this.player.previousVelocity).multiplyScalar(0.24);
+    const momentumTarget = vectorA.copy(this.player.velocity).multiplyScalar(CAMERA_LOOKAHEAD + speedFactor * 0.05).add(accelerationOffset);
+    dampVector(this.cameraMomentum, momentumTarget, editorLocked ? 7.5 : 4.6, dt);
+    const forwardOffset = vectorA.copy(this.cameraMomentum);
     const sideOffset = vectorB.set(Math.cos(heading), 0, -Math.sin(heading)).multiplyScalar(CAMERA_SIDE_OFFSET + speedFactor * 0.25);
+    const attackDirection = vectorG.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
 
     if (editorLocked) {
       this.cameraTarget.set(
@@ -3641,14 +3952,14 @@ export class SporeSliceGame {
       );
     } else {
       this.cameraTarget.set(
-        focus.x + forwardOffset.x * 0.45,
-        focus.y + 1.75 + speedFactor * 0.12,
-        focus.z + forwardOffset.z * 0.45,
+        focus.x + forwardOffset.x * 0.42 + attackDirection.x * attackCameraPush * 0.34,
+        focus.y + 1.75 + speedFactor * 0.12 + this.player.attackImpact * 0.06,
+        focus.z + forwardOffset.z * 0.42 + attackDirection.z * attackCameraPush * 0.34,
       );
       this.cameraGoal.set(
-        focus.x - Math.sin(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.x + forwardOffset.x,
-        focus.y + CAMERA_HEIGHT + speedFactor * 0.45,
-        focus.z - Math.cos(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.z + forwardOffset.z,
+        focus.x - Math.sin(heading) * (CAMERA_DISTANCE + speedFactor * 1.3 - attackCameraPush * 0.45) + sideOffset.x + forwardOffset.x - attackDirection.x * attackCameraPush * 0.2,
+        focus.y + CAMERA_HEIGHT + speedFactor * 0.45 + this.player.terrain.slope * 0.2,
+        focus.z - Math.cos(heading) * (CAMERA_DISTANCE + speedFactor * 1.3 - attackCameraPush * 0.45) + sideOffset.z + forwardOffset.z - attackDirection.z * attackCameraPush * 0.2,
       );
     }
 
@@ -3665,16 +3976,22 @@ export class SporeSliceGame {
 
     this.cameraShake = Math.max(0, this.cameraShake - dt * 2.8);
     this.cameraFovKick = Math.max(0, this.cameraFovKick - dt * CAMERA_FOV_KICK_DECAY);
+    if (!editorLocked && this.player.isSprinting && speedFactor > 0.35) {
+      const sprintPulse = Math.sin(this.elapsed * 26) * 0.03 * speedFactor;
+      this.cameraGoal.y += Math.abs(sprintPulse) * 0.8;
+      this.cameraGoal.x += sprintPulse * 0.5;
+      this.cameraTarget.y += Math.abs(sprintPulse) * 0.2;
+    }
     if (this.cameraShake > 0.001) {
       this.cameraGoal.x += (Math.random() - 0.5) * this.cameraShake;
       this.cameraGoal.y += (Math.random() - 0.5) * this.cameraShake * 0.75;
       this.cameraGoal.z += (Math.random() - 0.5) * this.cameraShake;
     }
 
-    dampVector(this.camera.position, this.cameraGoal, 5, dt);
+    dampVector(this.camera.position, this.cameraGoal, editorLocked ? 6.2 : 4.35, dt);
     const targetFov = editorLocked
       ? 52 + this.cameraFovKick * 0.35
-      : this.cameraBaseFov + this.cameraFovKick + speedFactor * 1.1 + surgeCharge * surgePower * 0.8;
+      : this.cameraBaseFov + this.cameraFovKick + speedFactor * 1.35 + surgeCharge * surgePower * 0.8 + attackCameraPush * 0.95;
     this.camera.fov = damp(this.camera.fov, targetFov, 8, dt);
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(this.cameraTarget);
@@ -3820,6 +4137,7 @@ export class SporeSliceGame {
     this.updateFood(simDt);
     this.updateEcosystem(simDt);
     this.updateEnemies(simDt);
+    this.resolvePlayerBodyCollisions();
     this.updateCamera(dt);
     this.updateEffects(dt);
     this.updateMoveTargetMarker(dt);
