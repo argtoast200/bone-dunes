@@ -11,7 +11,14 @@ import {
   UPGRADE_DEFS,
   WORLD_RADIUS,
 } from "./config";
-import { DEFAULT_SAVE, clearSave, loadSave, saveProgress } from "./save";
+import {
+  DEFAULT_ALIGNMENT,
+  DEFAULT_SAVE,
+  clearSave,
+  createRandomCreatureProfile,
+  loadSave,
+  saveProgress,
+} from "./save";
 import { buildWorld, getTerrainHeight } from "./world";
 
 const FIXED_STEP = 1 / 60;
@@ -40,6 +47,10 @@ const FERAL_SURGE_RECOVERY_BONUS = 0.18;
 const IMPACT_SLOW_DURATION = 0.07;
 const KILL_IMPACT_SLOW_DURATION = 0.11;
 const CAMERA_FOV_KICK_DECAY = 7.5;
+const EDITOR_CAMERA_DISTANCE = 5.9;
+const EDITOR_CAMERA_HEIGHT = 3.2;
+const EDITOR_LOOK_HEIGHT = 1.92;
+const EDITOR_ORBIT_SPEED = 0.32;
 const EFFECT_RING_GEOMETRY = new THREE.RingGeometry(0.34, 0.62, 18);
 const EFFECT_SHARD_GEOMETRY = new THREE.OctahedronGeometry(0.18, 0);
 const EFFECT_BITE_ARC_GEOMETRY = new THREE.TorusGeometry(1.05, 0.11, 4, 16, Math.PI * 0.95);
@@ -56,6 +67,7 @@ const BLOCKED_BROWSER_KEYS = new Set([
   "ShiftRight",
   "Space",
   "KeyF",
+  "Escape",
 ]);
 
 const vectorA = new THREE.Vector3();
@@ -63,6 +75,17 @@ const vectorB = new THREE.Vector3();
 const vectorC = new THREE.Vector3();
 const vectorD = new THREE.Vector3();
 const upVector = new THREE.Vector3(0, 1, 0);
+const TRAIT_LIMITS = Object.fromEntries(UPGRADE_DEFS.map((upgrade) => [upgrade.key, upgrade.costs.length]));
+const TRAIT_TITLES = {
+  jaw: "Jawmaw",
+  horns: "Hookhorn",
+  crest: "Suncrest",
+  tail: "Whiptail",
+  legs: "Longstride",
+  spikes: "Spikehide",
+  glow: "Glowstripe",
+};
+const PATTERN_LABELS = ["Bloomstripe", "Scatterback", "Ribscribe"];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -109,9 +132,9 @@ function normalizeAngle(angle) {
 function makeCreatureModel({
   bodyColor,
   accentColor,
+  markingColor = accentColor,
   scale = 1,
   aggressive = false,
-  crest = false,
   eyeColor = aggressive ? 0xffd09a : 0xfef7df,
 }) {
   const group = new THREE.Group();
@@ -128,8 +151,19 @@ function makeCreatureModel({
     flatShading: true,
     roughness: 0.82,
     metalness: 0.08,
-    emissive: crest ? accentColor : 0x000000,
-    emissiveIntensity: crest ? 0.35 : 0,
+    emissive: accentColor,
+    emissiveIntensity: 0.08,
+  });
+
+  const markingMaterial = new THREE.MeshStandardMaterial({
+    color: markingColor,
+    flatShading: true,
+    roughness: 0.38,
+    metalness: 0.04,
+    emissive: markingColor,
+    emissiveIntensity: 0.12,
+    transparent: true,
+    opacity: 0.74,
   });
 
   const eyeMaterial = new THREE.MeshBasicMaterial({ color: eyeColor });
@@ -161,15 +195,27 @@ function makeCreatureModel({
   jaw.castShadow = true;
   headPivot.add(jaw);
 
+  const jawFangs = [];
+  [-1, 1].forEach((sign) => {
+    const fang = new THREE.Mesh(new THREE.ConeGeometry(0.08 * scale, 0.4 * scale, 4), accentMaterial);
+    fang.position.set(sign * 0.28 * scale, 0.08 * scale, 0.2 * scale);
+    fang.rotation.x = Math.PI * 0.12;
+    fang.rotation.z = sign * 0.18;
+    jaw.add(fang);
+    jawFangs.push(fang);
+  });
+
+  const hornGroup = new THREE.Group();
+  headPivot.add(hornGroup);
   const hornLeft = new THREE.Mesh(new THREE.ConeGeometry(0.18 * scale, 0.75 * scale, 4), accentMaterial);
   hornLeft.position.set(-0.38 * scale, 0.5 * scale, 0.05 * scale);
   hornLeft.rotation.z = 0.28;
-  headPivot.add(hornLeft);
+  hornGroup.add(hornLeft);
 
   const hornRight = hornLeft.clone();
   hornRight.position.x *= -1;
   hornRight.rotation.z *= -1;
-  headPivot.add(hornRight);
+  hornGroup.add(hornRight);
 
   const eyeLeft = new THREE.Mesh(new THREE.SphereGeometry(0.13 * scale, 6, 6), eyeMaterial);
   eyeLeft.position.set(-0.28 * scale, 0.1 * scale, 0.64 * scale);
@@ -179,14 +225,21 @@ function makeCreatureModel({
   eyeRight.position.x *= -1;
   headPivot.add(eyeRight);
 
+  const tailGroup = new THREE.Group();
+  tailGroup.position.set(0, 0.2 * scale, -2.1 * scale);
+  group.add(tailGroup);
+
   const tail = new THREE.Mesh(new THREE.ConeGeometry(0.45 * scale, 1.8 * scale, 5), accentMaterial);
-  tail.position.set(0, 0.2 * scale, -2.1 * scale);
   tail.rotation.x = -Math.PI * 0.55;
   tail.castShadow = true;
-  group.add(tail);
+  tailGroup.add(tail);
+
+  const tailBlade = new THREE.Mesh(new THREE.BoxGeometry(0.14 * scale, 0.48 * scale, 0.9 * scale), markingMaterial);
+  tailBlade.position.set(0, 0.66 * scale, -0.9 * scale);
+  tailBlade.rotation.x = -Math.PI * 0.22;
+  tailGroup.add(tailBlade);
 
   const crestGroup = new THREE.Group();
-  crestGroup.visible = crest;
   for (let index = 0; index < 4; index += 1) {
     const frill = new THREE.Mesh(new THREE.ConeGeometry(0.2 * scale, 0.85 * scale, 4), accentMaterial);
     frill.position.set(0, 0.8 * scale + index * 0.1 * scale, -1 * scale + index * 0.7 * scale);
@@ -195,7 +248,63 @@ function makeCreatureModel({
   }
   group.add(crestGroup);
 
+  const spikeGroup = new THREE.Group();
+  const spikes = [];
+  [
+    [-0.82, 0.22, 0.82, 0.15],
+    [0.82, 0.22, 0.82, -0.15],
+    [-0.92, 0.34, -0.15, 0.22],
+    [0.92, 0.34, -0.15, -0.22],
+    [-0.68, 0.44, -1.08, 0.3],
+    [0.68, 0.44, -1.08, -0.3],
+  ].forEach(([x, y, z, roll]) => {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.13 * scale, 0.74 * scale, 4), accentMaterial);
+    spike.position.set(x * scale, y * scale, z * scale);
+    spike.rotation.z = Math.PI / 2 + roll;
+    spike.rotation.x = 0.16;
+    spikeGroup.add(spike);
+    spikes.push(spike);
+  });
+  group.add(spikeGroup);
+
+  const markingsGroup = new THREE.Group();
+  const stripePattern = new THREE.Group();
+  for (let index = 0; index < 3; index += 1) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.16 * scale, 0.14 * scale, 1.55 * scale), markingMaterial);
+    stripe.position.set((index - 1) * 0.38 * scale, 0.48 * scale, -0.15 * scale);
+    stripe.rotation.x = Math.PI * 0.12;
+    stripePattern.add(stripe);
+  }
+  const scatterPattern = new THREE.Group();
+  [
+    [-0.56, 0.28, 0.68],
+    [0.46, 0.44, 0.18],
+    [-0.24, 0.56, -0.72],
+    [0.58, 0.24, -0.88],
+  ].forEach(([x, y, z], index) => {
+    const blotch = new THREE.Mesh(new THREE.SphereGeometry((index % 2 === 0 ? 0.18 : 0.13) * scale, 6, 6), markingMaterial);
+    blotch.position.set(x * scale, y * scale, z * scale);
+    blotch.scale.z = 0.55;
+    scatterPattern.add(blotch);
+  });
+  const ribPattern = new THREE.Group();
+  [-1, 1].forEach((sign) => {
+    for (let index = 0; index < 3; index += 1) {
+      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.12 * scale, 0.1 * scale, 0.72 * scale), markingMaterial);
+      rib.position.set(sign * 0.68 * scale, 0.24 * scale + index * 0.2 * scale, 0.48 * scale - index * 0.7 * scale);
+      rib.rotation.y = sign * 0.54;
+      rib.rotation.z = sign * 0.16;
+      ribPattern.add(rib);
+    }
+  });
+  markingsGroup.add(stripePattern);
+  markingsGroup.add(scatterPattern);
+  markingsGroup.add(ribPattern);
+  group.add(markingsGroup);
+
   const legPivots = [];
+  const legMeshes = [];
+  const footMeshes = [];
   const legOffsets = [
     [-0.75, -0.45, 0.85],
     [0.75, -0.45, 0.85],
@@ -218,21 +327,40 @@ function makeCreatureModel({
     pivot.add(foot);
 
     legPivots[index] = pivot;
+    legMeshes[index] = leg;
+    footMeshes[index] = foot;
     group.add(pivot);
   });
 
   return {
     group,
     refs: {
+      materials: {
+        skin: skinMaterial,
+        accent: accentMaterial,
+        markings: markingMaterial,
+      },
       headPivot,
+      head,
       jaw,
+      jawFangs,
       tail,
+      tailGroup,
+      tailBlade,
       back,
       body,
+      hornGroup,
       hornLeft,
       hornRight,
       crestGroup,
+      spikeGroup,
+      spikes,
+      markingsGroup,
+      patternGroups: [stripePattern, scatterPattern, ribPattern],
       legPivots,
+      legMeshes,
+      footMeshes,
+      modelScale: scale,
     },
   };
 }
@@ -269,18 +397,31 @@ function createFoodMesh(rare = false) {
 
 function createEnemy(type) {
   const spec = ENEMY_DEFS[type];
+  const profile = {
+    bodyHue: 0,
+    accentHue: 0,
+    markingsHue: 0,
+    size: Number((0.96 + Math.random() * 0.08).toFixed(3)),
+    patternType: spec.patternBias ?? Math.floor(Math.random() * 3),
+    patternScale: Number((0.9 + Math.random() * 0.2).toFixed(3)),
+  };
   const model = makeCreatureModel({
     bodyColor: spec.color,
     accentColor: spec.accent,
+    markingColor: spec.accent,
     scale: spec.scale,
-    aggressive: type === "predator",
-    crest: type === "predator",
+    aggressive: spec.family === "predator",
   });
-
-  return {
+  const enemy = {
     ...model,
-    type,
+    type: spec.family,
+    variant: type,
     spec,
+    traits: { ...spec.traits },
+    profile,
+    baseScale: profile.size,
+    baseBackGlow: 0.08,
+    baseMarkingGlow: 0.1,
     velocity: new THREE.Vector3(),
     direction: new THREE.Vector3(),
     state: "idle",
@@ -300,25 +441,157 @@ function createEnemy(type) {
     hitDirection: new THREE.Vector3(),
     threatGlow: 0,
   };
+  applyCreatureAppearance(enemy, enemy.traits, enemy.profile, {
+    body: spec.color,
+    accent: spec.accent,
+    markings: spec.accent,
+  });
+
+  return enemy;
 }
 
-function getUpgradeLevels(saveData) {
-  return {
-    speed: clamp(saveData.upgrades.speed ?? 0, 0, 3),
-    health: clamp(saveData.upgrades.health ?? 0, 0, 3),
-    bite: clamp(saveData.upgrades.bite ?? 0, 0, 3),
-    cooldown: clamp(saveData.upgrades.cooldown ?? 0, 0, 3),
-    crest: clamp(saveData.upgrades.crest ?? 0, 0, 1),
-  };
+function getTraitLevels(saveData) {
+  return UPGRADE_DEFS.reduce((traits, upgrade) => {
+    traits[upgrade.key] = clamp(Math.round(saveData.upgrades?.[upgrade.key] ?? 0), 0, TRAIT_LIMITS[upgrade.key]);
+    return traits;
+  }, {});
 }
 
 function computePlayerStats(upgrades) {
   return {
-    speed: PLAYER_BASE_STATS.speed * (1 + upgrades.speed * 0.12),
-    health: PLAYER_BASE_STATS.health + upgrades.health * 28,
-    biteDamage: PLAYER_BASE_STATS.biteDamage + upgrades.bite * 9,
-    biteCooldown: PLAYER_BASE_STATS.biteCooldown * (1 - upgrades.cooldown * 0.1),
+    speed: PLAYER_BASE_STATS.speed * (1 + upgrades.legs * 0.1),
+    health: PLAYER_BASE_STATS.health + upgrades.spikes * 16,
+    biteDamage: PLAYER_BASE_STATS.biteDamage + upgrades.jaw * 7 + upgrades.horns * 4,
+    biteCooldown: PLAYER_BASE_STATS.biteCooldown * (1 - upgrades.glow * 0.08),
+    knockback: PLAYER_BASE_STATS.knockback * (1 + upgrades.tail * 0.18),
+    defense: clamp(PLAYER_BASE_STATS.defense + upgrades.spikes * 0.09, 0, 0.3),
+    intimidation: PLAYER_BASE_STATS.intimidation + upgrades.horns * 0.12 + upgrades.crest * 0.18,
+    attackReach: 4.35 + upgrades.jaw * 0.28 + upgrades.horns * 0.18,
+    lungeSpeed: ATTACK_LUNGE_SPEED * (1 + upgrades.legs * 0.03 + upgrades.jaw * 0.02),
   };
+}
+
+function normalizeAlignment(alignment) {
+  const total = (alignment.aggressive ?? 0) + (alignment.social ?? 0) + (alignment.adaptive ?? 0);
+  if (total <= 0.001) {
+    return { ...DEFAULT_ALIGNMENT };
+  }
+
+  return {
+    aggressive: alignment.aggressive / total,
+    social: alignment.social / total,
+    adaptive: alignment.adaptive / total,
+  };
+}
+
+function shiftAlignment(alignment, key, amount) {
+  const next = {
+    aggressive: Math.max(0.01, alignment.aggressive ?? DEFAULT_ALIGNMENT.aggressive),
+    social: Math.max(0.01, alignment.social ?? DEFAULT_ALIGNMENT.social),
+    adaptive: Math.max(0.01, alignment.adaptive ?? DEFAULT_ALIGNMENT.adaptive),
+  };
+  next[key] = Math.max(0.01, next[key] + amount);
+  return normalizeAlignment(next);
+}
+
+function createPaletteFromProfile(profile) {
+  return {
+    body: new THREE.Color().setHSL(profile.bodyHue, 0.34, 0.43).getHex(),
+    accent: new THREE.Color().setHSL(profile.accentHue, 0.74, 0.62).getHex(),
+    markings: new THREE.Color().setHSL(profile.markingsHue, 0.86, 0.64).getHex(),
+  };
+}
+
+function describeTraitLevel(key, level) {
+  if (level <= 0) {
+    return "Dormant";
+  }
+
+  switch (key) {
+    case "jaw":
+      return `+${level * 7} bite damage`;
+    case "horns":
+      return `+${level * 4} damage, +${Math.round(level * 12)}% intimidation`;
+    case "crest":
+      return `${level === 1 ? "Open" : "Great"} crest, +${Math.round(level * 18)}% scavenger pressure`;
+    case "tail":
+      return `+${Math.round(level * 18)}% knockback`;
+    case "legs":
+      return `+${Math.round(level * 10)}% speed`;
+    case "spikes":
+      return `+${level * 16} health, ${Math.round(level * 9)}% defense`;
+    case "glow":
+      return `-${Math.round(level * 8)}% bite recovery`;
+    default:
+      return "Mutating";
+  }
+}
+
+function buildCreatureIdentity(profile, traits) {
+  const leadTrait = Object.entries(traits)
+    .filter(([, level]) => level > 0)
+    .sort((left, right) => right[1] - left[1])[0]?.[0];
+  const sizeWord = profile.size > 1.05 ? "Great" : profile.size < 0.95 ? "Lean" : "Dune";
+  const patternWord = PATTERN_LABELS[profile.patternType] ?? PATTERN_LABELS[0];
+  const traitWord = TRAIT_TITLES[leadTrait] ?? "Nestling";
+  return `${sizeWord} ${traitWord} ${patternWord}`;
+}
+
+function applyCreatureAppearance(creature, traits, profile, palette) {
+  const resolvedPalette = palette ?? createPaletteFromProfile(profile);
+  const sizeScale = profile.size ?? 1;
+  creature.traits = { ...traits };
+  creature.profile = { ...profile };
+  creature.baseScale = sizeScale;
+  creature.group.scale.setScalar(creature.baseScale);
+
+  const { refs } = creature;
+  refs.materials.skin.color.set(resolvedPalette.body);
+  refs.materials.accent.color.set(resolvedPalette.accent);
+  refs.materials.accent.emissive.set(resolvedPalette.accent);
+  refs.materials.markings.color.set(resolvedPalette.markings);
+  refs.materials.markings.emissive.set(resolvedPalette.markings);
+
+  refs.body.scale.set(1.16 + traits.spikes * 0.05, 0.93 + traits.spikes * 0.04, 1.66 + traits.legs * 0.04);
+  refs.back.scale.set(0.88 + traits.crest * 0.08, 0.68 + traits.glow * 0.05, 1.06 + traits.tail * 0.06);
+  refs.head.scale.set(0.9 + traits.jaw * 0.04, 0.75 + traits.horns * 0.02, 1.25 + traits.jaw * 0.08);
+  refs.jaw.scale.set(1 + traits.jaw * 0.12, 1 + traits.jaw * 0.08, 1 + traits.jaw * 0.2);
+  refs.jawFangs.forEach((fang, index) => {
+    fang.scale.setScalar(1 + traits.jaw * 0.12 + traits.horns * 0.06);
+    fang.position.x = (index === 0 ? -1 : 1) * (0.28 + traits.jaw * 0.03) * refs.modelScale;
+  });
+  refs.hornGroup.visible = traits.horns > 0;
+  refs.hornLeft.scale.set(1 + traits.horns * 0.34, 1 + traits.horns * 0.34, 1 + traits.horns * 0.44);
+  refs.hornRight.scale.copy(refs.hornLeft.scale);
+  refs.hornLeft.position.y = (0.5 + traits.horns * 0.05) * refs.modelScale;
+  refs.hornRight.position.y = refs.hornLeft.position.y;
+  refs.crestGroup.visible = traits.crest > 0;
+  refs.crestGroup.scale.set(1, 0.86 + traits.crest * 0.22, 0.96 + traits.crest * 0.12);
+  refs.tail.scale.set(1 + traits.tail * 0.06, 1 + traits.tail * 0.14, 1 + traits.tail * 0.08);
+  refs.tailBlade.visible = traits.tail > 0;
+  refs.tailBlade.scale.set(0.9 + traits.tail * 0.18, 0.9 + traits.tail * 0.12, 0.9 + traits.tail * 0.22);
+  refs.spikeGroup.visible = traits.spikes > 0;
+  refs.spikes.forEach((spike, index) => {
+    const tier = index < 2 ? 1 : index < 4 ? 2 : 3;
+    const active = traits.spikes >= tier;
+    spike.visible = active;
+    spike.scale.setScalar(active ? 0.9 + traits.spikes * 0.18 : 0.01);
+  });
+  refs.patternGroups.forEach((group, index) => {
+    group.visible = index === profile.patternType;
+    group.scale.setScalar(profile.patternScale ?? 1);
+  });
+  refs.markingsGroup.visible = true;
+  refs.materials.markings.opacity = 0.2 + traits.glow * 0.12;
+  creature.baseBackGlow = 0.08 + traits.glow * 0.08 + traits.crest * 0.16;
+  creature.baseMarkingGlow = 0.08 + traits.glow * 0.22;
+
+  const legStretch = 1 + traits.legs * 0.14;
+  refs.legMeshes.forEach((leg, index) => {
+    leg.scale.y = legStretch;
+    refs.footMeshes[index].position.y = -1.42 * refs.modelScale * legStretch;
+    refs.legPivots[index].position.y = -0.45 * refs.modelScale - traits.legs * 0.05 * refs.modelScale;
+  });
 }
 
 function getZoneName(position) {
@@ -373,8 +646,12 @@ export class SporeSliceGame {
       objective: "Collect food, hunt threats, and evolve at the nest.",
       dna: this.saveData.dna,
       bestRun: this.saveData.bestRun ?? 0,
-      upgrades: getUpgradeLevels(this.saveData),
+      upgrades: getTraitLevels(this.saveData),
+      creatureProfile: { ...this.saveData.creatureProfile },
+      alignment: normalizeAlignment(this.saveData.alignment ?? DEFAULT_ALIGNMENT),
       hasSave: this.saveData.dna > 0 || Object.values(this.saveData.upgrades).some(Boolean),
+      editorOpen: false,
+      lastEvolution: null,
       startedAt: 0,
       respawnTimer: 0,
     };
@@ -418,6 +695,10 @@ export class SporeSliceGame {
       level: 0,
       pulse: 0,
     };
+    this.evolutionFx = {
+      timer: 0,
+      trait: null,
+    };
     this.runStats = {
       sessionDna: 0,
       scavengersDefeated: 0,
@@ -443,6 +724,7 @@ export class SporeSliceGame {
     this.scene.add(this.moveTargetMarker.group);
     this.resetPlayerToNest(true);
     this.applyUpgradeVisuals();
+    this.persistProgress();
     this.resize = this.resize.bind(this);
     this.tick = this.tick.bind(this);
     this.handleKey = this.handleKey.bind(this);
@@ -473,8 +755,8 @@ export class SporeSliceGame {
     const model = makeCreatureModel({
       bodyColor: 0x966f58,
       accentColor: 0x6ff4d9,
+      markingColor: 0x78ffe5,
       scale: 1.15,
-      crest: false,
     });
 
     const trailShadow = new THREE.Mesh(
@@ -534,6 +816,11 @@ export class SporeSliceGame {
       attackRecoil: 0,
       stepCycle: 0,
       attackSwingId: 0,
+      baseScale: 1,
+      baseBackGlow: 0.12,
+      baseMarkingGlow: 0.14,
+      evolutionTimer: 0,
+      evolutionTrait: null,
       groundMarker,
     };
   }
@@ -718,29 +1005,29 @@ export class SporeSliceGame {
 
   spawnEnemies() {
     SCAVENGER_SPAWNS.forEach((spawn, index) => {
-      const enemy = createEnemy("scavenger");
+      const enemy = createEnemy(spawn.enemyType ?? "scavenger");
       enemy.spawn = spawn;
       const offset = getSpawnOffset(3.2);
       const x = clamp(spawn.x + offset.x, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
       const z = clamp(spawn.z + offset.z, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
-      enemy.group.position.set(x, getTerrainHeight(x, z) + 1.3, z);
+      enemy.group.position.set(x, getTerrainHeight(x, z) + enemy.spec.yOffset, z);
       enemy.home = new THREE.Vector3(enemy.group.position.x, enemy.group.position.y, enemy.group.position.z);
       enemy.group.rotation.y = Math.random() * Math.PI * 2;
-      enemy.group.userData.enemyId = `scavenger-${index}`;
+      enemy.group.userData.enemyId = `${enemy.variant}-${index}`;
       this.scene.add(enemy.group);
       this.enemies.push(enemy);
     });
 
     PREDATOR_SPAWNS.forEach((spawn, index) => {
-      const enemy = createEnemy("predator");
+      const enemy = createEnemy(spawn.enemyType ?? "predator");
       enemy.spawn = spawn;
       const offset = getSpawnOffset(3.8);
       const x = clamp(spawn.x + offset.x, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
       const z = clamp(spawn.z + offset.z, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
-      enemy.group.position.set(x, getTerrainHeight(x, z) + 1.5, z);
+      enemy.group.position.set(x, getTerrainHeight(x, z) + enemy.spec.yOffset, z);
       enemy.home = new THREE.Vector3(enemy.group.position.x, enemy.group.position.y, enemy.group.position.z);
       enemy.group.rotation.y = Math.random() * Math.PI * 2;
-      enemy.group.userData.enemyId = `predator-${index}`;
+      enemy.group.userData.enemyId = `${enemy.variant}-${index}`;
       this.scene.add(enemy.group);
       this.enemies.push(enemy);
     });
@@ -755,6 +1042,7 @@ export class SporeSliceGame {
         : "Food glows across the dunes. Bring DNA home before the predators close in.";
       this.runStats.summary = "Fresh hunt. Build a score, then bank upgrades at the nest.";
       this.state.startedAt = this.elapsed;
+      this.state.editorOpen = false;
       this.renderer.domElement.focus();
       this.emitState();
     }
@@ -773,6 +1061,20 @@ export class SporeSliceGame {
     const pressed = event.type === "keydown";
     if (BLOCKED_BROWSER_KEYS.has(event.code)) {
       event.preventDefault();
+    }
+
+    if (event.code === "Escape" && pressed && this.state.editorOpen) {
+      this.toggleEditor(false);
+      return;
+    }
+
+    if (event.code === "KeyF" && pressed && !event.repeat) {
+      this.toggleFullscreen();
+      return;
+    }
+
+    if (this.state.editorOpen) {
+      return;
     }
 
     switch (event.code) {
@@ -813,11 +1115,6 @@ export class SporeSliceGame {
           this.queueAttack();
         }
         break;
-      case "KeyF":
-        if (pressed && !event.repeat) {
-          this.toggleFullscreen();
-        }
-        break;
       default:
         break;
     }
@@ -825,6 +1122,9 @@ export class SporeSliceGame {
 
   handleMouseDown(event) {
     this.renderer.domElement.focus();
+    if (this.state.editorOpen) {
+      return;
+    }
     if (event.button === 2) {
       event.preventDefault();
       this.input.attackHeld = true;
@@ -867,6 +1167,9 @@ export class SporeSliceGame {
   }
 
   setVirtualInput(key, pressed) {
+    if (this.state.editorOpen) {
+      return;
+    }
     if (!(key in this.virtualInput)) {
       return;
     }
@@ -878,7 +1181,7 @@ export class SporeSliceGame {
   }
 
   queueAttack() {
-    if (this.state.mode !== "playing" || this.state.respawnTimer > 0) {
+    if (this.state.mode !== "playing" || this.state.respawnTimer > 0 || this.state.editorOpen) {
       return;
     }
     this.input.attackQueued = true;
@@ -932,6 +1235,29 @@ export class SporeSliceGame {
     document.exitFullscreen?.();
   }
 
+  toggleEditor(forceOpen) {
+    const nextOpen = typeof forceOpen === "boolean" ? forceOpen : !this.state.editorOpen;
+    if (nextOpen) {
+      if (this.state.mode !== "playing" || this.state.zone !== "nest" || this.state.respawnTimer > 0) {
+        return false;
+      }
+      this.handleBlur();
+      this.clearMoveTarget();
+      this.input.attackQueued = false;
+      this.state.editorOpen = true;
+      this.state.message = "Nest editor open. Spend DNA to reshape the dune-runner.";
+    } else {
+      if (!this.state.editorOpen) {
+        return false;
+      }
+      this.state.editorOpen = false;
+      this.state.message = "Evolution locked in. Leave the nest and test the new body.";
+      this.renderer.domElement.focus();
+    }
+    this.emitState();
+    return true;
+  }
+
   installTestingHooks() {
     window.__sporeSliceGameInstance = this;
     window.advanceTime = (ms = 16) => {
@@ -955,6 +1281,7 @@ export class SporeSliceGame {
 
       const nearbyEnemies = sortByDistance(playerPosition, this.enemies.filter((enemy) => enemy.deadTimer <= 0), (enemy, distance) => ({
         type: enemy.type,
+        variant: enemy.variant,
         state: enemy.state,
         x: Number(enemy.group.position.x.toFixed(1)),
         z: Number(enemy.group.position.z.toFixed(1)),
@@ -967,6 +1294,7 @@ export class SporeSliceGame {
         coordinate_system: "x east/right, z south-to-north on the ground plane, y up",
         mode: this.state.mode,
         zone: this.state.zone,
+        editorOpen: this.state.editorOpen,
         message: this.state.message,
         objective: this.state.objective,
         player: {
@@ -989,6 +1317,7 @@ export class SporeSliceGame {
           surgeCharge: Number((this.surge.timer / FERAL_SURGE_MAX_TIMER).toFixed(2)),
           surgeLevel: this.surge.level,
           sprinting: this.input.sprint,
+          identity: buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
         },
         moveTarget: this.moveTarget.active
           ? {
@@ -1000,6 +1329,8 @@ export class SporeSliceGame {
         bestRun: this.state.bestRun,
         summary: this.runStats.summary,
         upgrades: this.state.upgrades,
+        creatureProfile: this.state.creatureProfile,
+        alignment: this.state.alignment,
         food: nearbyFoods,
         enemies: nearbyEnemies,
       });
@@ -1007,22 +1338,12 @@ export class SporeSliceGame {
   }
 
   applyUpgradeVisuals() {
-    const { speed, health, bite, cooldown, crest } = this.state.upgrades;
-    const bodyMaterial = this.player.refs.body.material;
-    const jawMaterial = this.player.refs.jaw.material;
-    const backMaterial = this.player.refs.back.material;
-
-    this.player.refs.crestGroup.visible = Boolean(crest);
-    this.player.refs.body.scale.set(1.2 + health * 0.05, 0.95 + health * 0.04, 1.7 + speed * 0.04);
-    this.player.refs.back.scale.set(0.9 + bite * 0.05, 0.7 + cooldown * 0.04, 1.1 + bite * 0.07);
-    this.player.refs.hornLeft.scale.setScalar(1 + bite * 0.14);
-    this.player.refs.hornRight.scale.setScalar(1 + bite * 0.14);
-    this.player.refs.tail.scale.set(1 + speed * 0.03, 1 + speed * 0.12, 1 + speed * 0.03);
-
-    bodyMaterial.color.setHSL(0.07 + speed * 0.005, 0.33 + cooldown * 0.02, 0.48 + health * 0.02);
-    jawMaterial.color.setHSL(0.44 - bite * 0.03, 0.78, 0.62 - bite * 0.03);
-    backMaterial.emissive.setHSL(0.44 - bite * 0.03, 0.82, 0.48 + crest * 0.05);
-    backMaterial.emissiveIntensity = 0.08 + cooldown * 0.08 + crest * 0.25;
+    applyCreatureAppearance(
+      this.player,
+      this.state.upgrades,
+      this.state.creatureProfile,
+      createPaletteFromProfile(this.state.creatureProfile),
+    );
   }
 
   updatePlayerStats() {
@@ -1037,6 +1358,8 @@ export class SporeSliceGame {
       dna: this.state.dna,
       bestRun: this.state.bestRun,
       upgrades: this.state.upgrades,
+      creatureProfile: this.state.creatureProfile,
+      alignment: this.state.alignment,
     });
   }
 
@@ -1093,6 +1416,11 @@ export class SporeSliceGame {
       source === "predator" ? 2 : source === "scavenger" || source === "rareFood" ? 1 : 0,
       source === "predator" ? 4.6 : source === "scavenger" ? 3.5 : source === "rareFood" ? 3.8 : 2.1,
     );
+    this.state.alignment = shiftAlignment(
+      this.state.alignment,
+      source === "predator" || source === "scavenger" ? "aggressive" : "adaptive",
+      source === "predator" ? 0.03 : source === "scavenger" ? 0.02 : source === "rareFood" ? 0.018 : 0.012,
+    );
     this.updateRunScore();
     this.state.message = reward > amount
       ? `${message} Danger surge: +${reward - amount} bonus DNA. Feral surge x${surgeLevel}.`
@@ -1127,29 +1455,54 @@ export class SporeSliceGame {
 
     this.state.dna -= cost;
     this.state.upgrades[key] = currentLevel + 1;
+    this.state.alignment = shiftAlignment(this.state.alignment, "social", 0.026);
     this.updatePlayerStats();
     this.applyUpgradeVisuals();
     this.player.sprintCharge = 1;
     this.player.health = Math.min(this.player.maxHealth, this.player.health + this.player.maxHealth * 0.25);
-    this.state.message = `${spec.label} evolved. ${spec.description}.`;
+    this.player.evolutionTimer = 1.45;
+    this.player.evolutionTrait = key;
+    this.evolutionFx.timer = 1.45;
+    this.evolutionFx.trait = key;
+    this.state.lastEvolution = {
+      key,
+      label: spec.label,
+      summary: describeTraitLevel(key, this.state.upgrades[key]),
+    };
+    this.state.message = `${spec.label} evolved. ${describeTraitLevel(key, this.state.upgrades[key])}.`;
     this.spawnBurst(this.player.group.position, {
       color: 0x93ffe3,
-      ttl: 0.6,
-      size: 1.35,
-      shards: 9,
+      ttl: 0.72,
+      size: 1.55,
+      shards: 11,
     });
-    this.cameraShake = Math.max(this.cameraShake, 0.12);
+    this.spawnAttackArc(this.player.group.position.clone().setY(this.player.group.position.y + 0.5), this.player.yaw, {
+      color: 0x9fffe6,
+      ttl: 0.32,
+      size: 1.35,
+    });
+    this.cameraShake = Math.max(this.cameraShake, 0.16);
+    this.cameraFovKick = Math.max(this.cameraFovKick, 2.2);
     this.persistProgress();
     this.emitState();
   }
 
   resetProgress() {
     clearSave();
-    this.saveData = { ...DEFAULT_SAVE, upgrades: { ...DEFAULT_SAVE.upgrades } };
+    this.saveData = {
+      ...DEFAULT_SAVE,
+      upgrades: { ...DEFAULT_SAVE.upgrades },
+      creatureProfile: createRandomCreatureProfile(),
+      alignment: { ...DEFAULT_ALIGNMENT },
+    };
     this.state.dna = 0;
     this.state.bestRun = 0;
-    this.state.upgrades = getUpgradeLevels(this.saveData);
+    this.state.upgrades = getTraitLevels(this.saveData);
+    this.state.creatureProfile = { ...this.saveData.creatureProfile };
+    this.state.alignment = { ...this.saveData.alignment };
     this.state.hasSave = false;
+    this.state.editorOpen = false;
+    this.state.lastEvolution = null;
     this.state.message = "The nest is quiet again. A fresh organism emerges.";
     this.runStats = {
       sessionDna: 0,
@@ -1170,6 +1523,7 @@ export class SporeSliceGame {
       food.group.visible = true;
     });
     this.enemies.forEach((enemy) => this.respawnEnemy(enemy));
+    this.persistProgress();
     this.emitState();
   }
 
@@ -1195,7 +1549,10 @@ export class SporeSliceGame {
     this.player.hurtTint = 0;
     this.player.pickupPulse = 0;
     this.player.attackRecoil = 0;
-    this.player.group.scale.set(1, 1, 1);
+    this.player.group.scale.setScalar(this.player.baseScale);
+    this.player.evolutionTimer = 0;
+    this.player.evolutionTrait = null;
+    this.state.editorOpen = false;
     this.clearFeralSurge();
     this.impactSlow = 0;
     this.cameraFovKick = 0;
@@ -1223,12 +1580,12 @@ export class SporeSliceGame {
     enemy.staggerTimer = 0;
     enemy.fleeTimer = 0;
     enemy.threatGlow = 0;
-    enemy.group.scale.set(1, 1, 1);
+    enemy.group.scale.setScalar(enemy.baseScale);
     enemy.group.visible = true;
     const offset = getSpawnOffset(enemy.type === "predator" ? 3.8 : 3.2);
     const x = clamp(enemy.spawn.x + offset.x, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
     const z = clamp(enemy.spawn.z + offset.z, -WORLD_RADIUS + 5, WORLD_RADIUS - 5);
-    enemy.group.position.set(x, getTerrainHeight(x, z) + (enemy.type === "predator" ? 1.5 : 1.3), z);
+    enemy.group.position.set(x, getTerrainHeight(x, z) + enemy.spec.yOffset, z);
     enemy.home.set(enemy.group.position.x, enemy.group.position.y, enemy.group.position.z);
     enemy.velocity.set(0, 0, 0);
   }
@@ -1238,7 +1595,8 @@ export class SporeSliceGame {
       return;
     }
 
-    this.player.health = Math.max(0, this.player.health - amount);
+    const finalDamage = amount * (1 - this.playerStats.defense);
+    this.player.health = Math.max(0, this.player.health - finalDamage);
     this.player.invulnerability = 0.65;
     this.player.hurtTint = 0.9;
     if (this.player.attackPhase === "windup" || this.player.attackPhase === "strike") {
@@ -1266,6 +1624,7 @@ export class SporeSliceGame {
       this.state.respawnTimer = 2.3;
       const dnaLoss = Math.min(this.state.dna, 8);
       this.state.dna -= dnaLoss;
+      this.state.alignment = shiftAlignment(this.state.alignment, "adaptive", 0.02);
       this.updateRunScore();
       this.clearFeralSurge();
       this.runStats.summary = `Run score ${this.runStats.score}. ${this.runStats.predatorsDefeated} predators and ${this.runStats.scavengersDefeated} scavengers brought down.`;
@@ -1281,12 +1640,13 @@ export class SporeSliceGame {
       return { defeated: false, killed: false };
     }
 
-    enemy.hp = Math.max(0, enemy.hp - amount);
+    const adjustedDamage = amount * (enemy.variant === "armoredScavenger" ? 0.88 : 1);
+    enemy.hp = Math.max(0, enemy.hp - adjustedDamage);
     enemy.hitFlash = 0.36;
     enemy.impactPulse = enemy.hp <= 0 ? 1 : 0.82;
     enemy.threatGlow = 1;
     enemy.attackTelegraph = 0;
-    enemy.staggerTimer = enemy.hp <= 0 ? 0.28 : enemy.type === "predator" ? 0.18 : 0.3;
+    enemy.staggerTimer = enemy.hp <= 0 ? 0.28 : (enemy.type === "predator" ? 0.18 : 0.3) / (enemy.spec.poise ?? 1);
     enemy.fleeTimer = enemy.type === "scavenger" && enemy.hp > 0 ? 0.48 : 0;
     enemy.cooldown = Math.max(enemy.cooldown, enemy.type === "predator" ? 0.55 : 0.42);
     if (sourceDirection) {
@@ -1314,6 +1674,7 @@ export class SporeSliceGame {
       ring: false,
       rise: 0.08,
     });
+    this.state.alignment = shiftAlignment(this.state.alignment, "aggressive", enemy.type === "predator" ? 0.012 : 0.008);
 
     if (enemy.hp <= 0) {
       enemy.deadTimer = enemy.type === "predator" ? 11 : 8;
@@ -1344,7 +1705,7 @@ export class SporeSliceGame {
 
       vectorA.subVectors(enemy.group.position, this.player.group.position).setY(0);
       const distance = vectorA.length();
-      const range = enemy.type === "predator" ? 5.4 : 4.7;
+      const range = Math.max(this.playerStats.attackReach + 0.4, enemy.type === "predator" ? 5.4 : 4.7);
       if (distance >= range) {
         return;
       }
@@ -1367,7 +1728,7 @@ export class SporeSliceGame {
   }
 
   triggerAttack() {
-    if (this.player.attackCooldown > 0 || this.state.mode !== "playing" || this.player.attackPhase !== "idle") {
+    if (this.player.attackCooldown > 0 || this.state.mode !== "playing" || this.player.attackPhase !== "idle" || this.state.editorOpen) {
       return;
     }
 
@@ -1405,17 +1766,18 @@ export class SporeSliceGame {
       forward.normalize();
     }
     const playerPosition = this.player.group.position;
-    const mouthPosition = playerPosition.clone().addScaledVector(forward, 2.05);
+    const biteReachBonus = this.state.upgrades.jaw * 0.12 + this.state.upgrades.horns * 0.05;
+    const mouthPosition = playerPosition.clone().addScaledVector(forward, 2.05 + biteReachBonus);
 
     this.spawnAttackArc(mouthPosition, this.player.yaw, {
       color: 0xffe1b0,
       ttl: 0.18,
-      size: 1,
+      size: 1 + this.state.upgrades.jaw * 0.08 + this.state.upgrades.horns * 0.05,
     });
     this.spawnBurst(mouthPosition, {
       color: 0xffcb8f,
       ttl: 0.18,
-      size: 0.72,
+      size: 0.72 + this.state.upgrades.jaw * 0.04,
       shards: 5,
       rise: 0.12,
     });
@@ -1430,7 +1792,8 @@ export class SporeSliceGame {
 
       vectorA.subVectors(enemy.group.position, playerPosition);
       const horizontalDistance = Math.hypot(vectorA.x, vectorA.z);
-      if (horizontalDistance > (enemy.type === "predator" ? 5 : 4.35)) {
+      const range = enemy.type === "predator" ? this.playerStats.attackReach + 0.55 : this.playerStats.attackReach;
+      if (horizontalDistance > range) {
         return;
       }
 
@@ -1442,7 +1805,7 @@ export class SporeSliceGame {
         return;
       }
 
-      const impactDirection = vectorC.copy(forward).multiplyScalar(enemy.type === "predator" ? 5.2 : 7.2);
+      const impactDirection = vectorC.copy(forward).multiplyScalar((enemy.type === "predator" ? 5.2 : 7.2) * this.playerStats.knockback);
       enemy.velocity.addScaledVector(impactDirection, 1);
       const result = this.damageEnemy(enemy, this.playerStats.biteDamage, forward);
       hitCount += 1;
@@ -1530,7 +1893,8 @@ export class SporeSliceGame {
       const distanceToHome = getDistance2D(position, enemy.home);
       const playerInNest = this.state.zone === "nest";
       const playerVulnerable = this.player.health <= this.player.maxHealth * 0.68 || this.state.dna >= 10;
-      const telegraphDuration = enemy.type === "predator" ? 0.55 : 0.34;
+      const intimidationPressure = this.playerStats.intimidation + (this.player.evolutionTimer > 0 ? 0.05 : 0);
+      const telegraphDuration = enemy.variant === "hornedPredator" ? 0.62 : enemy.variant === "armoredScavenger" ? 0.38 : enemy.type === "predator" ? 0.55 : 0.34;
 
       enemy.roamTimer -= dt;
       if (enemy.roamTimer <= 0) {
@@ -1540,28 +1904,30 @@ export class SporeSliceGame {
 
       let desiredDirection = vectorB.set(0, 0, 0);
       let desiredSpeed = 0;
-      const shouldFlee = enemy.type === "scavenger" && (enemy.hp < enemy.maxHp * 0.45 || enemy.fleeTimer > 0);
+      const shouldFlee = enemy.type === "scavenger"
+        && enemy.variant !== "armoredScavenger"
+        && (enemy.hp < enemy.maxHp * 0.45 || enemy.fleeTimer > 0 || (intimidationPressure > 0.16 && distanceToPlayer < 6.2));
 
       if (enemy.staggerTimer > 0) {
         enemy.state = enemy.type === "predator" ? "braced" : "staggered";
         desiredDirection = enemy.hitDirection.lengthSq() > 0.001
           ? vectorB.copy(enemy.hitDirection)
           : vectorB.subVectors(position, this.player.group.position).setY(0);
-        desiredSpeed = enemy.spec.speed * (enemy.type === "predator" ? 0.18 : 0.34);
+        desiredSpeed = enemy.spec.speed * (enemy.type === "predator" ? 0.18 : enemy.variant === "armoredScavenger" ? 0.22 : 0.34);
       } else if (enemy.attackTelegraph > 0) {
         enemy.state = enemy.type === "predator" ? "winding up" : "feinting";
         const previousTelegraph = enemy.attackTelegraph;
         enemy.attackTelegraph = Math.max(0, enemy.attackTelegraph - dt);
 
         desiredDirection = enemy.attackVector;
-        desiredSpeed = enemy.spec.speed * (enemy.type === "predator" ? 0.2 : 0.14);
+        desiredSpeed = enemy.spec.speed * (enemy.variant === "hornedPredator" ? 0.24 : enemy.type === "predator" ? 0.2 : 0.14);
 
         if (enemy.attackTelegraph <= 0 && previousTelegraph > 0) {
-          enemy.velocity.addScaledVector(enemy.attackVector, enemy.type === "predator" ? 7.4 : 5.2);
+          enemy.velocity.addScaledVector(enemy.attackVector, enemy.variant === "hornedPredator" ? 8.3 : enemy.type === "predator" ? 7.4 : 5.2);
           if (distanceToPlayer <= enemy.spec.attackRange + (enemy.type === "predator" ? 0.9 : 0.55) && this.state.respawnTimer <= 0) {
             this.damagePlayer(enemy.spec.damage, enemy.attackVector);
           }
-          enemy.cooldown = enemy.type === "predator" ? 1.65 : 1.2;
+          enemy.cooldown = enemy.variant === "hornedPredator" ? 1.5 : enemy.type === "predator" ? 1.65 : 1.2;
           enemy.threatGlow = 1;
         }
       } else {
@@ -1589,19 +1955,19 @@ export class SporeSliceGame {
             enemy.state = "fleeing";
           } else if (enemy.type === "scavenger") {
             if (distanceToPlayer > 4.5) {
-              desiredSpeed = enemy.spec.speed * 0.96;
+              desiredSpeed = enemy.spec.speed * (enemy.variant === "armoredScavenger" ? 0.84 : 0.96);
             } else {
               desiredDirection.crossVectors(desiredDirection.normalize(), upVector).multiplyScalar(enemy.circleSign);
-              desiredSpeed = enemy.spec.speed * 0.86;
-              enemy.state = "circling";
+              desiredSpeed = enemy.spec.speed * (enemy.variant === "armoredScavenger" ? 0.64 : 0.86);
+              enemy.state = enemy.variant === "armoredScavenger" ? "bracing" : "circling";
             }
           } else if (distanceToPlayer > 5.6) {
-            desiredSpeed = enemy.spec.speed * 1.02;
+            desiredSpeed = enemy.spec.speed * (enemy.variant === "hornedPredator" ? 1.08 : 1.02);
           } else {
             desiredDirection.crossVectors(desiredDirection.normalize(), upVector).multiplyScalar(enemy.circleSign);
             desiredDirection.addScaledVector(vectorC.subVectors(this.player.group.position, position).setY(0).normalize(), 0.45);
-            desiredSpeed = enemy.spec.speed * 0.8;
-            enemy.state = "stalking";
+            desiredSpeed = enemy.spec.speed * (enemy.variant === "hornedPredator" ? 0.88 : 0.8);
+            enemy.state = enemy.variant === "hornedPredator" ? "goring" : "stalking";
           }
         } else if (enemy.state === "fleeing") {
           desiredDirection = vectorB.subVectors(position, this.player.group.position).setY(0);
@@ -1632,7 +1998,7 @@ export class SporeSliceGame {
 
       position.x = clamp(position.x, -WORLD_RADIUS, WORLD_RADIUS);
       position.z = clamp(position.z, -WORLD_RADIUS, WORLD_RADIUS);
-      position.y = getTerrainHeight(position.x, position.z) + (enemy.type === "predator" ? 1.5 : 1.3);
+      position.y = getTerrainHeight(position.x, position.z) + enemy.spec.yOffset;
 
       if (enemy.velocity.lengthSq() > 0.1) {
         const yaw = Math.atan2(enemy.velocity.x, enemy.velocity.z);
@@ -1648,18 +2014,19 @@ export class SporeSliceGame {
       enemy.refs.body.position.z = -telegraphStrength * 0.14 - staggerStrength * 0.18;
       enemy.refs.back.position.z = -0.7 - telegraphStrength * 0.08 + staggerStrength * 0.06;
       enemy.refs.headPivot.rotation.x = Math.sin(gait * 0.35) * 0.08 - telegraphStrength * 0.2 - staggerStrength * 0.24;
-      enemy.refs.tail.rotation.x = -Math.PI * 0.55 + Math.sin(gait * 0.5) * 0.18 + telegraphStrength * 0.12 + staggerStrength * 0.18;
-      enemy.refs.body.material.emissive.setRGB(
+      enemy.refs.tailGroup.rotation.x = Math.sin(gait * 0.5) * 0.18 + telegraphStrength * 0.12 + staggerStrength * 0.18;
+      enemy.refs.materials.skin.emissive.setRGB(
         enemy.hitFlash * 0.8 + telegraphStrength * 0.8 + enemy.threatGlow * 0.18,
         enemy.hitFlash * 0.25 + telegraphStrength * 0.2,
         enemy.hitFlash * 0.18,
       );
-      enemy.refs.body.material.emissiveIntensity = enemy.hitFlash * 0.9 + telegraphStrength * 1.1 + enemy.threatGlow * 0.22;
-      enemy.refs.back.material.emissiveIntensity = telegraphStrength * 0.85 + enemy.threatGlow * 0.2;
+      enemy.refs.materials.skin.emissiveIntensity = enemy.hitFlash * 0.9 + telegraphStrength * 1.1 + enemy.threatGlow * 0.22;
+      enemy.refs.materials.accent.emissiveIntensity = enemy.baseBackGlow + telegraphStrength * 0.85 + enemy.threatGlow * 0.2;
+      enemy.refs.materials.markings.emissiveIntensity = enemy.baseMarkingGlow + enemy.threatGlow * 0.18 + telegraphStrength * 0.12;
       enemy.group.scale.set(
-        1 + enemy.impactPulse * 0.08,
-        1 - enemy.impactPulse * 0.06 - staggerStrength * 0.03,
-        1 + enemy.impactPulse * 0.14 + staggerStrength * 0.05,
+        enemy.baseScale * (1 + enemy.impactPulse * 0.08),
+        enemy.baseScale * (1 - enemy.impactPulse * 0.06 - staggerStrength * 0.03),
+        enemy.baseScale * (1 + enemy.impactPulse * 0.14 + staggerStrength * 0.05),
       );
     });
   }
@@ -1687,13 +2054,14 @@ export class SporeSliceGame {
     this.runStats.timeAlive += dt;
     const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
     const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
+    const editorLocked = this.state.editorOpen;
     this.player.attackResultTimer = Math.max(0, this.player.attackResultTimer - dt);
     if (this.player.attackResultTimer <= 0 && this.player.attackPhase === "idle") {
       this.player.attackResult = this.player.attackCooldown > 0 ? "cooldown" : "ready";
     }
 
-    const moveForward = Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
-    const moveStrafe = Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
+    const moveForward = editorLocked ? 0 : Number(this.input.forward || this.virtualInput.forward) - Number(this.input.backward || this.virtualInput.backward);
+    const moveStrafe = editorLocked ? 0 : Number(this.input.right || this.virtualInput.right) - Number(this.input.left || this.virtualInput.left);
     const hasDirectInput = moveForward !== 0 || moveStrafe !== 0;
     const desiredDirection = vectorA.set(0, 0, 0);
     let moving = false;
@@ -1724,6 +2092,11 @@ export class SporeSliceGame {
       }
     }
 
+    if (editorLocked) {
+      this.clearMoveTarget();
+      this.input.attackQueued = false;
+    }
+
     if (this.player.attackPhase !== "idle") {
       this.player.attackPhaseTimer = Math.max(0, this.player.attackPhaseTimer - dt);
       if (this.player.attackPhase === "windup" && this.player.attackPhaseTimer <= 0) {
@@ -1745,7 +2118,7 @@ export class SporeSliceGame {
       }
     }
 
-    const sprinting = this.input.sprint && moving && this.player.sprintCharge > 0.05;
+    const sprinting = !editorLocked && this.input.sprint && moving && this.player.sprintCharge > 0.05;
     if (sprinting) {
       this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE);
     } else {
@@ -1767,7 +2140,7 @@ export class SporeSliceGame {
     this.player.attackLungeTimer = Math.max(0, this.player.attackLungeTimer - dt);
     if (this.player.attackLungeTimer > 0) {
       vectorB.set(Math.sin(this.player.yaw), 0, Math.cos(this.player.yaw));
-      desiredVelocity.addScaledVector(vectorB, ATTACK_LUNGE_SPEED * (this.player.attackLungeTimer / ATTACK_LUNGE_DURATION));
+      desiredVelocity.addScaledVector(vectorB, this.playerStats.lungeSpeed * (this.player.attackLungeTimer / ATTACK_LUNGE_DURATION));
     }
 
     dampVector(this.player.velocity, desiredVelocity, moving ? (sprinting ? 18 : 14) : 8, dt);
@@ -1801,6 +2174,10 @@ export class SporeSliceGame {
     this.player.hurtTint = Math.max(0, this.player.hurtTint - dt * 1.6);
     this.player.pickupPulse = Math.max(0, this.player.pickupPulse - dt * 2.4);
     this.player.attackRecoil = Math.max(0, this.player.attackRecoil - dt * 4.8);
+    this.player.evolutionTimer = Math.max(0, this.player.evolutionTimer - dt);
+    if (this.player.evolutionTimer <= 0) {
+      this.player.evolutionTrait = null;
+    }
 
     if (this.input.attackQueued) {
       this.triggerAttack();
@@ -1833,30 +2210,34 @@ export class SporeSliceGame {
     this.player.refs.body.position.y = -windupStrength * 0.08 + strikeStrength * 0.05;
     this.player.refs.back.position.z = -0.7 - windupStrength * 0.08 + strikeStrength * 0.06;
     this.player.refs.headPivot.rotation.x = jawOpen * -0.34 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.05 - this.player.attackRecoil * 0.15 - windupStrength * 0.24 + strikeStrength * 0.34;
-    this.player.refs.tail.rotation.x = -Math.PI * 0.55 + Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.16 + speedRatio * 0.08 + surgeCharge * 0.08 + windupStrength * 0.08 - strikeStrength * 0.14;
+    this.player.refs.tailGroup.rotation.x = Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.16 + speedRatio * 0.08 + surgeCharge * 0.08 + windupStrength * 0.08 - strikeStrength * 0.14;
     this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16;
     this.player.groundMarker.rotation.z += dt * (0.35 + speedRatio * 0.6);
     this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12 + surgeCharge * 0.14);
 
     const tintStrength = this.player.hurtTint;
     const feralGlow = surgeCharge * (0.45 + surgePower * 0.08);
-    const baseBackGlow = 0.08 + (this.state.upgrades.cooldown ?? 0) * 0.08 + (this.state.upgrades.crest ?? 0) * 0.25;
-    this.player.refs.body.material.emissive.setRGB(
+    const evolutionPulse = this.player.evolutionTimer > 0 ? Math.sin((1 - this.player.evolutionTimer / 1.45) * Math.PI * 6) * 0.5 + 0.5 : 0;
+    this.player.refs.materials.skin.emissive.setRGB(
       tintStrength * 0.5 + feralGlow * 0.12,
       tintStrength * 0.1 + feralGlow * 0.42,
       tintStrength * 0.08 + feralGlow * 0.28,
     );
-    this.player.refs.body.material.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2 + feralGlow * 0.55;
-    this.player.refs.back.material.emissiveIntensity = baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08;
+    this.player.refs.materials.skin.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2 + feralGlow * 0.55;
+    this.player.refs.materials.accent.emissiveIntensity = this.player.baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08 + evolutionPulse * 0.55;
+    this.player.refs.materials.markings.emissiveIntensity = this.player.baseMarkingGlow + feralGlow * 0.55 + evolutionPulse * 0.85;
     this.player.group.scale.set(
-      1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.04 + strikeStrength * 0.07,
-      1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02 - windupStrength * 0.05 + strikeStrength * 0.02,
-      1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.06 + strikeStrength * 0.1,
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.04 + strikeStrength * 0.07 + evolutionPulse * 0.02),
+      this.player.baseScale * (1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02 - windupStrength * 0.05 + strikeStrength * 0.02 - evolutionPulse * 0.01),
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.06 + strikeStrength * 0.1 + evolutionPulse * 0.03),
     );
 
     this.state.zone = getZoneName(this.player.group.position);
 
-    if (this.state.zone === "nest") {
+    if (this.state.zone === "nest" && this.state.editorOpen) {
+      this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 18);
+      this.state.objective = "Editor open: spend DNA, compare stat shifts, then close the nest screen to hunt.";
+    } else if (this.state.zone === "nest") {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
       this.state.objective = "Safe nest: heal, refill your burst, and spend DNA on evolutions.";
     } else if (this.state.zone === "danger") {
@@ -1868,31 +2249,45 @@ export class SporeSliceGame {
 
   updateCamera(dt) {
     const focus = this.player.group.position;
-    const heading = this.player.yaw;
+    const editorLocked = this.state.editorOpen;
+    const heading = editorLocked ? this.elapsed * EDITOR_ORBIT_SPEED + Math.PI * 0.12 : this.player.yaw;
     const speedFactor = clamp(this.player.velocity.length() / (this.playerStats.speed * SPRINT_SPEED_BONUS), 0, 1);
     const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
     const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
     const forwardOffset = vectorA.copy(this.player.velocity).multiplyScalar(CAMERA_LOOKAHEAD);
     const sideOffset = vectorB.set(Math.cos(heading), 0, -Math.sin(heading)).multiplyScalar(CAMERA_SIDE_OFFSET + speedFactor * 0.25);
 
-    this.cameraTarget.set(
-      focus.x + forwardOffset.x * 0.45,
-      focus.y + 1.75 + speedFactor * 0.12,
-      focus.z + forwardOffset.z * 0.45,
-    );
-    this.cameraGoal.set(
-      focus.x - Math.sin(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.x + forwardOffset.x,
-      focus.y + CAMERA_HEIGHT + speedFactor * 0.45,
-      focus.z - Math.cos(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.z + forwardOffset.z,
-    );
+    if (editorLocked) {
+      this.cameraTarget.set(
+        focus.x,
+        focus.y + EDITOR_LOOK_HEIGHT,
+        focus.z,
+      );
+      this.cameraGoal.set(
+        focus.x - Math.sin(heading) * EDITOR_CAMERA_DISTANCE,
+        focus.y + EDITOR_CAMERA_HEIGHT,
+        focus.z - Math.cos(heading) * EDITOR_CAMERA_DISTANCE,
+      );
+    } else {
+      this.cameraTarget.set(
+        focus.x + forwardOffset.x * 0.45,
+        focus.y + 1.75 + speedFactor * 0.12,
+        focus.z + forwardOffset.z * 0.45,
+      );
+      this.cameraGoal.set(
+        focus.x - Math.sin(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.x + forwardOffset.x,
+        focus.y + CAMERA_HEIGHT + speedFactor * 0.45,
+        focus.z - Math.cos(heading) * (CAMERA_DISTANCE + speedFactor * 1.3) + sideOffset.z + forwardOffset.z,
+      );
+    }
 
-    if (this.state.zone === "danger") {
+    if (!editorLocked && this.state.zone === "danger") {
       this.cameraGoal.y += 0.8;
       this.cameraGoal.x += 1.2;
       this.cameraTarget.y += 0.12;
     }
 
-    if (surgePower > 0) {
+    if (!editorLocked && surgePower > 0) {
       this.cameraGoal.y += surgeCharge * 0.25;
       this.cameraTarget.y += surgeCharge * 0.08;
     }
@@ -1906,7 +2301,10 @@ export class SporeSliceGame {
     }
 
     dampVector(this.camera.position, this.cameraGoal, 5, dt);
-    this.camera.fov = damp(this.camera.fov, this.cameraBaseFov + this.cameraFovKick + speedFactor * 1.1 + surgeCharge * surgePower * 0.8, 8, dt);
+    const targetFov = editorLocked
+      ? 52 + this.cameraFovKick * 0.35
+      : this.cameraBaseFov + this.cameraFovKick + speedFactor * 1.1 + surgeCharge * surgePower * 0.8;
+    this.camera.fov = damp(this.camera.fov, targetFov, 8, dt);
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(this.cameraTarget);
   }
@@ -2069,7 +2467,11 @@ export class SporeSliceGame {
       this.zoneTransition = Math.max(0, this.zoneTransition - dt * 1.5);
     }
 
-    if (this.state.mode === "playing" && this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
+    if (this.state.editorOpen) {
+      this.state.message = this.state.lastEvolution
+        ? `${this.state.lastEvolution.label} set. ${this.state.lastEvolution.summary}.`
+        : "Nest editor open. Shape the creature, then close the editor to hunt.";
+    } else if (this.state.mode === "playing" && this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
       this.state.message = `Feral surge x${this.surge.level}. Keep feeding it with blooms or kills before it burns out.`;
     } else if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
       this.state.message = "The air thickens with heat. Better rewards, worse odds.";
@@ -2106,10 +2508,21 @@ export class SporeSliceGame {
         ...upgrade,
         level,
         cost,
+        summary: describeTraitLevel(upgrade.key, level),
+        nextSummary: cost == null ? "Complete" : describeTraitLevel(upgrade.key, level + 1),
         maxed: cost == null,
         canBuy: this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
       };
     });
+    const identity = buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades);
+    const statEntries = [
+      { label: "Bite", value: Math.round(this.playerStats.biteDamage), detail: "damage" },
+      { label: "Stride", value: this.playerStats.speed.toFixed(1), detail: "move speed" },
+      { label: "Hide", value: `${Math.round(this.playerStats.defense * 100)}%`, detail: "damage cut" },
+      { label: "Tail", value: `${Math.round((this.playerStats.knockback - 1) * 100)}%`, detail: "knockback" },
+      { label: "Bite Cooldown", value: `${this.playerStats.biteCooldown.toFixed(2)}s`, detail: "recovery" },
+      { label: "Presence", value: `${Math.round(this.playerStats.intimidation * 100)}%`, detail: "enemy pressure" },
+    ];
     const closestThreat = this.enemies
       .filter((enemy) => enemy.deadTimer <= 0)
       .reduce((closest, enemy) => Math.min(closest, getDistance2D(enemy.group.position, this.player.group.position)), Number.POSITIVE_INFINITY);
@@ -2140,11 +2553,24 @@ export class SporeSliceGame {
       zoneTransition: this.zoneTransition,
       upgrades: this.state.upgrades,
       upgradeEntries,
+      editorOpen: this.state.editorOpen,
+      editorPulse: this.player.evolutionTimer > 0 ? this.player.evolutionTimer / 1.45 : 0,
+      creatureIdentity: identity,
+      creatureProfile: {
+        ...this.state.creatureProfile,
+        patternLabel: PATTERN_LABELS[this.state.creatureProfile.patternType] ?? PATTERN_LABELS[0],
+      },
+      alignment: this.state.alignment,
+      traitStats: statEntries,
+      lastEvolution: this.state.lastEvolution,
       hasSave: this.state.hasSave,
       canUpgrade: this.state.zone === "nest" && this.state.mode !== "menu",
+      canOpenEditor: this.state.zone === "nest" && this.state.mode === "playing" && this.state.respawnTimer <= 0,
       controlsHint: this.state.mode === "menu"
         ? "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen"
-        : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite",
+        : this.state.editorOpen
+          ? "Nest editor open. Spend DNA, then press Esc or Close Editor."
+          : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite",
     });
   }
 

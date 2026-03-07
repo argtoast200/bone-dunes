@@ -96,3 +96,40 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - did not add combo trees, lock-on systems, animation rigs, or a larger combat ruleset
   - kept the pass focused on timing, feedback, and reaction quality inside the existing game loop
+
+## 2026-03-06 Creature Evolution + Editor Pass
+
+- Current request: make progression visibly transform the creature with a lightweight modular evolution system and a simplified nest editor, without rewriting the existing creature-stage slice.
+- Plan before implementation:
+  - keep the existing creature builder, but turn it into a modular part rig with head/back/tail/legs/body-marking groups driven by a saved creature profile + trait levels
+  - attach upgrades by toggling/scaling those prebuilt part groups rather than building a full freeform editor
+  - integrate evolution into the current DNA/save loop through a nest-only editor overlay and migrated trait persistence
+- Implemented:
+  - replaced the old flat upgrade map with trait-based evolution data (`jaw`, `horns`, `crest`, `tail`, `legs`, `spikes`, `glow`) plus save migration, hidden alignment persistence, and a saved creature profile (palette, markings pattern, size)
+  - extended the creature model with modular horns, crest, tail fin, rib spikes, marking patterns, longer-leg scaling, and stronger jaw/fang visuals, then reused the same trait application path for evolved enemy variants
+  - added evolved enemy variants using the same modular pipeline: `armoredScavenger` and `hornedPredator`, each with stat/behavior tweaks that match their silhouette
+  - added a nest-only creature editor overlay with phenotype naming, stat summary, DNA costs, mutation summaries, and transformation feedback while keeping the current game loop intact
+  - preserved existing combat/movement feel while letting traits affect damage, movement speed, defense, intimidation, knockback, and bite recovery
+  - surfaced the editor through both the side panel and the always-visible utility bar so the evolution screen is easy to reach at the nest
+- Validation:
+  - `npm run build` passes after the evolution/editor pass
+  - shared web-game client captures:
+    - `output/web-game/evolution-pass-1`
+    - `output/web-game/evolution-pass-2`
+    - `output/web-game/evolution-editor`
+  - visual inspection:
+    - verified the live HUD/gameplay screenshot still renders correctly after the modular-creature changes
+    - verified the nest editor layout and mutation list through Playwright snapshot inspection
+  - deterministic browser checks:
+    - editor opens from the live HUD at the nest and exposes all seven traits with DNA costs and stat summaries
+    - purchasing `Crushing Jaw` reduced DNA from `95` to `79` and raised bite damage from `22` to `29`
+    - purchasing `Glow Veins` reduced DNA from `79` to `65` and lowered bite cooldown from `0.62s` to `0.57s`
+    - reload/resume preserved DNA (`65`), purchased traits (`jaw: 1`, `glow: 1`), creature profile, and hidden alignment values
+    - left-click movement still set a move target and moved about `13.07` world units in the deterministic check
+    - arrow steering still moved about `3.06` world units in `500ms`
+    - `Space` bite dealt `29` after the jaw upgrade
+    - right-click bite also dealt `29`
+    - no browser console errors were reported beyond the React DevTools info banner
+- Scope protected:
+  - did not attempt a full freeform Spore editor, species generator, or multi-biome campaign
+  - kept alignment hidden and lightweight for future expansion instead of adding social gameplay now

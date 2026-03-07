@@ -27,13 +27,25 @@ const initialState = {
   threatDistance: null,
   zoneTransition: 0,
   upgrades: {
-    speed: 0,
-    health: 0,
-    bite: 0,
-    cooldown: 0,
+    jaw: 0,
+    horns: 0,
     crest: 0,
+    tail: 0,
+    legs: 0,
+    spikes: 0,
+    glow: 0,
   },
   upgradeEntries: [],
+  editorOpen: false,
+  editorPulse: 0,
+  canOpenEditor: false,
+  creatureIdentity: "Dune Nestling Bloomstripe",
+  creatureProfile: {
+    patternLabel: "Bloomstripe",
+    size: 1,
+  },
+  traitStats: [],
+  lastEvolution: null,
   hasSave: false,
   canUpgrade: false,
   controlsHint: "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen",
@@ -80,6 +92,8 @@ export function GameApp() {
   const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated;
   const zoneTitle = uiState.zone === "nest" ? "Safe Nest" : uiState.zone === "danger" ? "Predator Territory" : "Open Dunes";
   const surgeActive = uiState.surgeCharge > 0.05;
+  const activeMutations = uiState.upgradeEntries.filter((upgrade) => upgrade.level > 0);
+  const editorTransforming = uiState.editorOpen && uiState.editorPulse > 0.08;
   const biteStatus = uiState.attackPhase === "windup"
     ? "Coiling"
     : uiState.attackPhase === "strike"
@@ -105,8 +119,10 @@ export function GameApp() {
       ? "Your stride hits harder and your bite recovers faster. Chain blooms or kills before the window burns out."
     : uiState.zone === "danger"
       ? `All DNA gains are boosted by ${Math.round((uiState.dangerBoost - 1) * 100)}% while you stay inside the red basin.`
+      : uiState.editorOpen
+        ? "The nest editor freezes the action so you can shape the creature, compare stats, and lock in a new silhouette."
       : uiState.canUpgrade
-        ? "You are home. Heal, refill your burst, and spend DNA while the nest is safe."
+        ? "You are home. Heal, refill your burst, then open the creature editor and spend DNA on visible evolutions."
         : "Use the open dunes to route between blooms, then cash in upgrades at the nest.";
 
   return (
@@ -245,32 +261,69 @@ export function GameApp() {
               <div className="panel-heading">
                 <div>
                   <p className="eyebrow">Evolution</p>
-                  <h2>Nest Upgrades</h2>
+                  <h2>Creature Editor</h2>
                 </div>
                 <span className={`zone-pill ${uiState.canUpgrade ? "active" : ""}`}>
-                  {uiState.canUpgrade ? "Available" : "Return Home"}
+                  {uiState.editorOpen ? "Open" : uiState.canUpgrade ? "Ready" : "Return Home"}
                 </span>
               </div>
 
-              <div className="upgrade-list">
-                {uiState.upgradeEntries.map((upgrade) => (
-                  <button
-                    key={upgrade.key}
-                    type="button"
-                    className="upgrade-btn"
-                    disabled={!upgrade.canBuy}
-                    onClick={() => gameRef.current?.purchaseUpgrade(upgrade.key)}
-                  >
-                    <div>
-                      <strong>{upgrade.label}</strong>
-                      <span>{upgrade.description}</span>
-                    </div>
-                    <div className="upgrade-meta">
-                      <span>Lv {upgrade.level}</span>
-                      <span>{upgrade.maxed ? "Maxed" : `${upgrade.cost} DNA`}</span>
-                    </div>
-                  </button>
+              <div className="evolution-preview">
+                <div>
+                  <p className="eyebrow">Phenotype</p>
+                  <h3>{uiState.creatureIdentity}</h3>
+                  <p>
+                    {uiState.creatureProfile.patternLabel}
+                    {" "}
+                    pattern
+                    {" "}
+                    {uiState.creatureProfile.size > 1.05 ? "with a broader frame." : uiState.creatureProfile.size < 0.95 ? "with a lean, quick frame." : "with a balanced frame."}
+                  </p>
+                </div>
+                <div className="trait-chip-row">
+                  {(activeMutations.length > 0 ? activeMutations : uiState.upgradeEntries.slice(0, 3)).slice(0, 4).map((upgrade) => (
+                    <span key={upgrade.key} className={`trait-chip ${upgrade.level > 0 ? "active" : ""}`}>
+                      {upgrade.label}
+                      {upgrade.level > 0 ? ` Lv ${upgrade.level}` : ""}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="trait-stat-grid compact">
+                {uiState.traitStats.slice(0, 4).map((stat) => (
+                  <div key={stat.label} className="trait-stat">
+                    <span>{stat.label}</span>
+                    <strong>{stat.value}</strong>
+                    <small>{stat.detail}</small>
+                  </div>
                 ))}
+              </div>
+
+              {uiState.lastEvolution && (
+                <p className="signal-copy">
+                  Latest mutation:
+                  {" "}
+                  <strong>{uiState.lastEvolution.label}</strong>
+                  {" "}
+                  <span>{uiState.lastEvolution.summary}</span>
+                </p>
+              )}
+
+              <div className="editor-actions">
+                <button
+                  className="utility-btn"
+                  type="button"
+                  disabled={!uiState.canOpenEditor}
+                  onClick={() => gameRef.current?.toggleEditor(true)}
+                >
+                  Open Creature Editor
+                </button>
+                {uiState.editorOpen && (
+                  <button className="utility-btn secondary" type="button" onClick={() => gameRef.current?.toggleEditor(false)}>
+                    Close Editor
+                  </button>
+                )}
               </div>
             </div>
           </aside>
@@ -290,6 +343,14 @@ export function GameApp() {
                 <span>Best run</span>
                 <strong>{uiState.bestRun}</strong>
               </div>
+              <button
+                className="utility-btn"
+                type="button"
+                disabled={!uiState.canOpenEditor}
+                onClick={() => gameRef.current?.toggleEditor(true)}
+              >
+                Creature Editor
+              </button>
               <button className="utility-btn" type="button" onClick={() => gameRef.current?.toggleFullscreen()}>
                 Fullscreen
               </button>
@@ -379,6 +440,80 @@ export function GameApp() {
                   <button className="ghost-btn" type="button" onClick={() => gameRef.current?.resetProgress()}>
                     New Organism
                   </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {uiState.editorOpen && (
+            <div className="editor-overlay">
+              <div className={`editor-card ${editorTransforming ? "is-transforming" : ""}`}>
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Nest Editor</p>
+                    <h2>{uiState.creatureIdentity}</h2>
+                  </div>
+                  <button className="ghost-btn" type="button" onClick={() => gameRef.current?.toggleEditor(false)}>
+                    Close Editor
+                  </button>
+                </div>
+
+                <div className="editor-summary-grid">
+                  <div className="editor-summary-card">
+                    <span className="zone-chip">DNA {uiState.dna}</span>
+                    <p>
+                      {uiState.creatureProfile.patternLabel}
+                      {" "}
+                      markings on a
+                      {" "}
+                      {uiState.creatureProfile.size > 1.05 ? "larger" : uiState.creatureProfile.size < 0.95 ? "leaner" : "balanced"}
+                      {" "}
+                      frame.
+                    </p>
+                    <p>
+                      Buy parts at the nest only. Each mutation changes the live creature model and nudges combat stats.
+                    </p>
+                    {uiState.lastEvolution && (
+                      <div className="evolution-flash">
+                        <strong>{uiState.lastEvolution.label}</strong>
+                        <span>{uiState.lastEvolution.summary}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="trait-stat-grid">
+                    {uiState.traitStats.map((stat) => (
+                      <div key={stat.label} className="trait-stat">
+                        <span>{stat.label}</span>
+                        <strong>{stat.value}</strong>
+                        <small>{stat.detail}</small>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="upgrade-list editor-upgrade-list">
+                  {uiState.upgradeEntries.map((upgrade) => (
+                    <button
+                      key={upgrade.key}
+                      type="button"
+                      className={`upgrade-btn editor-upgrade-btn ${upgrade.level > 0 ? "active" : ""}`}
+                      disabled={!upgrade.canBuy}
+                      onClick={() => gameRef.current?.purchaseUpgrade(upgrade.key)}
+                    >
+                      <div>
+                        <span className="upgrade-slot">{upgrade.slot}</span>
+                        <strong>{upgrade.label}</strong>
+                        <span>{upgrade.description}</span>
+                        <span className="upgrade-bonus">{upgrade.summary}</span>
+                        {!upgrade.maxed && <span className="upgrade-next">Next: {upgrade.nextSummary}</span>}
+                      </div>
+                      <div className="upgrade-meta">
+                        <span>Lv {upgrade.level}</span>
+                        <span>{upgrade.maxed ? "Maxed" : `${upgrade.cost} DNA`}</span>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
