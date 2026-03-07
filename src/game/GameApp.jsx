@@ -13,6 +13,7 @@ const initialState = {
   sessionDna: 0,
   scavengersDefeated: 0,
   predatorsDefeated: 0,
+  herbivoresDefeated: 0,
   huntSummary: "Fresh hatchling. No hunts logged yet.",
   health: 120,
   maxHealth: 120,
@@ -26,6 +27,15 @@ const initialState = {
   dangerBoost: 1,
   threatDistance: null,
   zoneTransition: 0,
+  ecosystemNotice: "The dunes are still settling.",
+  territoryName: null,
+  territoryOwner: null,
+  territoryTemperament: null,
+  territoryAlert: 0,
+  territoryPopulation: null,
+  activeMigration: null,
+  nearbySpecies: [],
+  nearbyNests: [],
   upgrades: {
     jaw: 0,
     horns: 0,
@@ -89,11 +99,12 @@ export function GameApp() {
     gameRef.current?.setVirtualInput(key, pressed);
   };
 
-  const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated;
+  const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated + uiState.herbivoresDefeated;
   const zoneTitle = uiState.zone === "nest" ? "Safe Nest" : uiState.zone === "danger" ? "Predator Territory" : "Open Dunes";
   const surgeActive = uiState.surgeCharge > 0.05;
   const activeMutations = uiState.upgradeEntries.filter((upgrade) => upgrade.level > 0);
   const editorTransforming = uiState.editorOpen && uiState.editorPulse > 0.08;
+  const territoryPressure = Math.round((uiState.territoryAlert ?? 0) * 100);
   const biteStatus = uiState.attackPhase === "windup"
     ? "Coiling"
     : uiState.attackPhase === "strike"
@@ -211,15 +222,78 @@ export function GameApp() {
                 <span className={`zone-pill ${uiState.canUpgrade ? "active" : ""}`}>
                   {uiState.canUpgrade ? "Upgrade Window" : uiState.zone === "danger" ? "High Risk" : "Traveling"}
                 </span>
+                {uiState.territoryOwner && <span className="zone-pill active">{uiState.territoryOwner}</span>}
                 <span className="zone-chip">{uiState.threatDistance ? `Threat ${uiState.threatDistance.toFixed(0)}m` : "Threat unknown"}</span>
               </div>
               <p>{uiState.objective}</p>
+              <p className="signal-copy ecosystem-signal zone-signal">
+                {uiState.activeMigration
+                  ? `${uiState.activeMigration.label}: ${uiState.activeMigration.species} are on the move for ${uiState.activeMigration.timeLeft}s.`
+                  : uiState.territoryOwner
+                    ? `${uiState.territoryOwner} pressure at ${territoryPressure}% around ${uiState.territoryName}.`
+                    : uiState.ecosystemNotice}
+              </p>
             </div>
 
             <div className="panel-card message-card">
               <p className="eyebrow">{alertTitle}</p>
               <p>{alertCopy}</p>
               <p className="signal-copy">{uiState.message}</p>
+              {uiState.ecosystemNotice && <p className="signal-copy ecosystem-signal">{uiState.ecosystemNotice}</p>}
+            </div>
+
+            <div className="panel-card ecosystem-card">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Ecosystem</p>
+                  <h2>{uiState.territoryOwner ?? "Open Dunes"}</h2>
+                </div>
+                <span className={`zone-pill ${uiState.activeMigration ? "active" : ""}`}>
+                  {uiState.activeMigration ? uiState.activeMigration.label : uiState.territoryName ?? "No Active Claim"}
+                </span>
+              </div>
+
+              <p>
+                {uiState.territoryOwner
+                  ? `${uiState.territoryOwner} hold ${uiState.territoryName}. ${uiState.territoryTemperament} behavior spikes as you push deeper.`
+                  : "Species drift between landmarks until a migration, carcass, or intruder pulls them into a new fight."}
+              </p>
+
+              <div className="hunt-grid ecosystem-grid">
+                <div className="hunt-stat">
+                  <span>Territory alert</span>
+                  <strong>{uiState.territoryOwner ? `${territoryPressure}%` : "Low"}</strong>
+                </div>
+                <div className="hunt-stat">
+                  <span>Presence</span>
+                  <strong>{uiState.territoryPopulation ?? "--"}</strong>
+                </div>
+                <div className="hunt-stat">
+                  <span>Migration</span>
+                  <strong>{uiState.activeMigration ? `${uiState.activeMigration.timeLeft}s` : "Quiet"}</strong>
+                </div>
+              </div>
+
+              <div className="trait-chip-row ecosystem-chip-row">
+                {uiState.nearbySpecies.slice(0, 4).map((entry) => (
+                  <span key={entry.id} className="trait-chip active ecosystem-chip">
+                    {entry.species}
+                    {" "}
+                    {entry.distance.toFixed(0)}m
+                  </span>
+                ))}
+              </div>
+
+              {uiState.nearbyNests.length > 0 && (
+                <div className="nest-list">
+                  {uiState.nearbyNests.slice(0, 2).map((nest) => (
+                    <div key={`${nest.species}-${nest.distance}`} className={`nest-pill ${nest.destroyed ? "broken" : ""}`}>
+                      <span>{nest.species}</span>
+                      <strong>{nest.destroyed ? "Broken" : `${Math.round((nest.hp / nest.maxHp) * 100)}% nest`}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="panel-card hunt-card">
@@ -332,9 +406,13 @@ export function GameApp() {
             <div className={`panel-card loop-card ${alertTone}`}>
               <p className="eyebrow">{uiState.zone === "danger" ? "Push Deeper" : "Loop"}</p>
               <p>
-                {uiState.zone === "danger"
-                  ? "Rare blooms and predator hunts spike your run score fast, but the basin turns every mistake into a wipe."
-                  : "Collect food, take smart fights, then come home to heal and convert your better movement into longer runs."}
+                {uiState.activeMigration
+                  ? `${uiState.activeMigration.label} is live. Follow the movement and you will run into safer grazers, pressured scavengers, or a predator clash.`
+                  : uiState.territoryOwner
+                    ? `${uiState.territoryOwner} define this stretch of dunes. Cross their landmark ring for better action, then retreat before the territory closes around you.`
+                    : uiState.zone === "danger"
+                      ? "Rare blooms and predator hunts spike your run score fast, but the basin turns every mistake into a wipe."
+                      : "Collect food, take smart fights, then come home to heal and convert your better movement into longer runs."}
               </p>
             </div>
 

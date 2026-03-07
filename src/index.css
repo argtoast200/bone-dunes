@@ -551,6 +551,15 @@ button {
   border-top: 1px solid rgba(255, 214, 160, 0.1);
 }
 
+.ecosystem-signal {
+  color: #b8ffee;
+}
+
+.zone-signal {
+  margin-top: 14px;
+  font-size: 0.88rem;
+}
+
 .hunt-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -575,6 +584,44 @@ button {
 
 .hunt-stat strong {
   font-size: 1.4rem;
+}
+
+.ecosystem-grid {
+  margin-bottom: 12px;
+}
+
+.ecosystem-chip-row {
+  margin-top: 10px;
+}
+
+.ecosystem-chip {
+  background: linear-gradient(135deg, rgba(255, 220, 172, 0.88), rgba(134, 255, 228, 0.88));
+}
+
+.nest-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.nest-pill {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 244, 227, 0.05);
+  color: rgba(248, 234, 209, 0.78);
+  font-size: 0.82rem;
+}
+
+.nest-pill strong {
+  color: #fff1dd;
+}
+
+.nest-pill.broken {
+  border: 1px solid rgba(255, 134, 104, 0.24);
+  color: #ffd3c0;
 }
 
 .upgrade-btn:not(:disabled):hover,

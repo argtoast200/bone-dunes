@@ -133,3 +133,42 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - did not attempt a full freeform Spore editor, species generator, or multi-biome campaign
   - kept alignment hidden and lightweight for future expansion instead of adding social gameplay now
+
+## 2026-03-07 Ecosystem Simulation Pass
+
+- Current request: make Bone Dunes feel alive with a lightweight ecosystem layer inspired by Spore Creature Stage, without rewriting the architecture or bloating the scope.
+- Ecosystem plan used:
+  - species data lives in lightweight `SPECIES_DEFS` / `MIGRATION_EVENT_DEFS`
+  - territories are represented by landmark rings anchored to visible species nests
+  - creatures keep the existing enemy entity structure but gain simple needs/state (`patrolling`, `foraging`, `scavenging`, `defending`, `resting`, `fleeing`, `migrating`)
+  - migration events temporarily retask species packs instead of spawning a larger simulation
+- Implemented:
+  - added three explicit species definitions with territory, temperament, diet, pack, nest, and respawn data: `Dune Scavenger`, `Bone Stalker`, and `Burrowing Herbivore`
+  - converted enemy spawning to species packs with leader/follower logic while preserving the current creature/combat pipeline
+  - added visible species nests and territory rings that pulse on alert, player intrusion, and migration pressure
+  - added carcasses, scavenging behavior, predator hunting, herbivore grazing/fleeing, territory defense, and cross-species combat
+  - added migration events (`Herd Crossing`, `Stalker Raid`, `Scavenger Swarm`) with deterministic trigger support through `window.__sporeSliceGameInstance.triggerMigrationEvent(...)`
+  - tied respawns to species nests so destroying a nest reduces that species presence over time
+  - expanded `render_game_to_text` and HUD state with territory owner/label, ecosystem notice, migration state, nearby species, nearby nests, and species-tagged enemies
+  - added a compact ecosystem HUD readout plus always-visible territory/migration text in the main area card so the ecosystem remains readable at smaller viewport heights
+- Validation:
+  - `npm run build` passes after the ecosystem pass
+  - shared web-game client captures:
+    - `output/web-game/ecosystem-pass-1`
+    - `output/web-game/ecosystem-pass-2`
+    - `output/web-game/ecosystem-pass-3`
+  - visual inspection:
+    - the world now surfaces territory feedback in the visible HUD even when the side panel does not fully fit above the fold
+    - nest rings, species landmarks, and nearby-species UI make the biome read as inhabited rather than static
+  - deterministic browser checks:
+    - triggering `Herd Crossing` moved nearby herbivores into explicit `migrating` state with an active migration timer
+    - moving the player into `Jaw Basin` set territory ownership to `Bone Stalker` and flipped predators into `defending` / attack states
+    - `Stalker Raid` produced cross-species combat, leaving `Dune Scavenger` carcasses and reducing scavenger population from 4 to 2 in the observed run
+    - destroying the `Burrowing Herbivore` nest and killing one herbivore prevented that species from returning after 22 seconds, leaving 3 living and 1 hidden/non-respawning member
+    - direct control regression check still passed in-browser:
+      - move-target travel covered about `12.54` world units
+      - a direct bite still reduced scavenger HP from `44` to `15` and returned attack result `hit`
+    - no browser console errors beyond the React DevTools info banner
+- Scope protected:
+  - no full ecological resource graph, breeding system, social gameplay, or map expansion
+  - no broad entity-count increase; the pass stays small and emergent rather than simulation-heavy
