@@ -37,6 +37,12 @@ const initialState = {
   territoryAlert: 0,
   territoryPopulation: null,
   activeMigration: null,
+  socialHint: null,
+  blueprintSummary: {
+    unlocked: 2,
+    total: 7,
+  },
+  speciesRelations: [],
   gamepadConnected: false,
   gamepadLabel: "",
   speciesName: "Boney Snapper",
@@ -273,6 +279,7 @@ export function GameApp() {
   const draftIdentity = uiState.evolutionDraft?.identity ?? "Unshaped Egg";
   const draftBaseIdentity = uiState.evolutionDraft?.baseIdentity ?? activeIdentity;
   const healthPct = uiState.maxHealth > 0 ? (uiState.health / uiState.maxHealth) * 100 : 0;
+  const socialHint = uiState.socialHint;
   const biteStatus = uiState.attackPhase === "windup"
     ? "Coiling"
     : uiState.attackPhase === "strike"
@@ -297,11 +304,15 @@ export function GameApp() {
       .filter(Boolean),
   }));
   const liveControls = uiState.gamepadConnected
-    ? "A or RT bite • B or LB sprint • Start opens the nest"
-    : "Shift sprint • Space or right click bite • F fullscreen";
+    ? "A or RT bite • B or LB sprint • Start opens the nest • Q/E/R social on keyboard"
+    : "Shift sprint • Q/E/R social • Space or right click bite • F fullscreen";
 
   let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";
-  if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
+  if (socialHint && socialHint.status !== "friendly" && socialHint.distance <= 9 && !uiState.canOpenEditor) {
+    contextPrompt = `Near ${socialHint.speciesName}. Hit ${socialHint.expectedHotkey} to ${socialHint.expectedVerb.toLowerCase()} and finish the pattern to befriend them.`;
+  } else if (socialHint && socialHint.status === "friendly" && !uiState.canOpenEditor) {
+    contextPrompt = `${socialHint.speciesName} recognize your line. Use the opening to gather DNA or pass through their territory.`;
+  } else if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
     contextPrompt = "Egg draft ready. Open Creature Evolution, then lay the egg from Species.";
   } else if (uiState.canOpenEditor) {
     contextPrompt = uiState.dna > 0
@@ -388,6 +399,30 @@ export function GameApp() {
                     {" "}
                     {liveControls}
                   </small>
+                  <div className="context-chip-row">
+                    <span className="context-chip">
+                      Blueprints
+                      {" "}
+                      {uiState.blueprintSummary.unlocked}
+                      /
+                      {uiState.blueprintSummary.total}
+                    </span>
+                    {socialHint && (
+                      <span className={`context-chip ${socialHint.status}`}>
+                        {socialHint.status === "friendly" ? "Friendly" : socialHint.status === "hostile" ? "Hostile" : "Wary"}
+                        {" "}
+                        {socialHint.speciesName}
+                        {socialHint.status !== "friendly" && (
+                          <>
+                            {" • "}
+                            {socialHint.expectedHotkey}
+                            {" "}
+                            {socialHint.expectedVerb}
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {uiState.canOpenEditor && (
                   <button className="utility-btn nest-action-btn" type="button" onClick={() => gameRef.current?.toggleEditor(true)}>
@@ -455,12 +490,13 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div className="menu-panel">
                     <h3>Core Loop</h3>
-                    <p>Hunt for DNA. Return to the nest. Spend DNA in Creature Evolution. Lay the egg. Raise the newborn.</p>
+                    <p>Hunt for DNA. Befriend or defeat species to unlock blueprints. Return to the nest. Spend DNA in Creature Evolution. Lay the egg. Raise the newborn.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>
                     <p>`Left click` move</p>
                     <p>`WASD` or `Arrows` steer</p>
+                    <p>`Q`, `E`, `R` social signals</p>
                     <p>`Shift` sprint</p>
                     <p>`Space`, `Right click`, or controller face buttons bite</p>
                   </div>
@@ -487,7 +523,7 @@ export function GameApp() {
                     <h2>{uiState.editorTab === "evolution" ? "Creature Evolution" : "Species"}</h2>
                     <p>
                       {uiState.editorTab === "evolution"
-                        ? "Draft the next egg here. Every upgrade changes the body and lengthens the growth journey."
+                        ? "Draft the next egg here. Spend DNA on blueprints unlocked in the dunes. Every upgrade changes the body and lengthens the growth journey."
                         : "Lay drafted eggs, fast evolve hatchlings with XP, or switch between living bodies in the line."}
                     </p>
                   </div>
@@ -558,6 +594,29 @@ export function GameApp() {
                       ))}
                     </div>
 
+                    <div className="blueprint-summary-card">
+                      <div>
+                        <span className="upgrade-slot">Blueprints</span>
+                        <strong>
+                          {uiState.blueprintSummary.unlocked}
+                          /
+                          {uiState.blueprintSummary.total}
+                          {" "}
+                          discovered
+                        </strong>
+                        <small>New parts come from befriending or defeating species in the dunes.</small>
+                      </div>
+                      <div className="species-relation-row">
+                        {uiState.speciesRelations.map((relation) => (
+                          <span key={relation.speciesId} className={`species-relation-pill ${relation.status}`}>
+                            {relation.speciesName}
+                            {" • "}
+                            {relation.status}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
                     {uiState.lastEvolution && (
                       <div className="evolution-flash">
                         <strong>{uiState.lastEvolution.label}</strong>
@@ -580,7 +639,7 @@ export function GameApp() {
                               <button
                                 key={upgrade.key}
                                 type="button"
-                                className={`upgrade-btn editor-upgrade-btn evolution-choice-card ${upgrade.level > 0 ? "active" : ""}`}
+                                className={`upgrade-btn editor-upgrade-btn evolution-choice-card ${upgrade.level > 0 ? "active" : ""} ${!upgrade.blueprintUnlocked ? "is-locked" : ""}`}
                                 disabled={!upgrade.canBuy}
                                 onClick={() => gameRef.current?.purchaseUpgrade(upgrade.key)}
                               >
@@ -590,11 +649,14 @@ export function GameApp() {
                                   <span>{upgrade.description}</span>
                                 </div>
                                 <div className="choice-meta">
-                                  <span className="choice-cost">{upgrade.maxed ? "Maxed" : `${upgrade.cost} DNA`}</span>
+                                  <span className="choice-cost">
+                                    {upgrade.maxed ? "Maxed" : !upgrade.blueprintUnlocked ? "Locked" : `${upgrade.cost} DNA`}
+                                  </span>
                                   <span className="choice-level">Lv {upgrade.level}</span>
                                 </div>
                                 <span className="upgrade-bonus">{upgrade.summary}</span>
                                 {!upgrade.maxed && <span className="upgrade-next">Next: {upgrade.nextSummary}</span>}
+                                {!upgrade.blueprintUnlocked && <span className="upgrade-lock">{upgrade.unlockHint}</span>}
                                 {!upgrade.maxed && (
                                   <span className="choice-tradeoff">
                                     Growth

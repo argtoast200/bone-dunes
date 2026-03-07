@@ -443,6 +443,7 @@ button {
   width: min(600px, calc(100vw - 40px));
   padding: 14px 16px;
   border-radius: 22px;
+  pointer-events: auto;
 }
 
 .context-strip strong {
@@ -455,6 +456,38 @@ button {
 .context-strip small {
   display: block;
   font-size: 0.74rem;
+}
+
+.context-chip-row,
+.species-relation-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.context-chip,
+.species-relation-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 214, 160, 0.14);
+  background: rgba(255, 244, 227, 0.06);
+  color: rgba(248, 234, 209, 0.82);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.context-chip.friendly,
+.species-relation-pill.friendly {
+  background: linear-gradient(135deg, rgba(121, 255, 217, 0.92), rgba(214, 255, 238, 0.9));
+  color: #10231d;
+}
+
+.context-chip.hostile,
+.species-relation-pill.hostile {
+  background: rgba(255, 140, 102, 0.14);
+  color: #ffd8c8;
 }
 
 .menu-overlay,
@@ -695,6 +728,23 @@ button {
   color: #efffe9;
 }
 
+.blueprint-summary-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(121, 255, 217, 0.16);
+  background: linear-gradient(135deg, rgba(121, 255, 217, 0.09), rgba(255, 214, 153, 0.05));
+}
+
+.blueprint-summary-card strong {
+  display: block;
+  margin: 6px 0 4px;
+  color: #fff4df;
+  font-size: 1.02rem;
+}
+
 .editor-group-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -739,6 +789,11 @@ button {
   background: linear-gradient(180deg, rgba(121, 255, 217, 0.1), rgba(255, 244, 227, 0.04));
 }
 
+.evolution-choice-card.is-locked {
+  border: 1px dashed rgba(255, 214, 160, 0.24);
+  background: linear-gradient(180deg, rgba(255, 174, 126, 0.08), rgba(255, 244, 227, 0.03));
+}
+
 .choice-summary strong,
 .choice-summary span,
 .upgrade-bonus,
@@ -776,6 +831,11 @@ button {
 
 .upgrade-next {
   color: rgba(248, 234, 209, 0.6);
+  font-size: 0.8rem;
+}
+
+.upgrade-lock {
+  color: var(--teal-bright);
   font-size: 0.8rem;
 }
 
@@ -860,6 +920,10 @@ button {
 .utility-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.evolution-choice-card.is-locked:disabled {
+  opacity: 0.78;
 }
 
 .mobile-controls {

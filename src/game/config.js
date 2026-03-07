@@ -20,6 +20,7 @@ export const UPGRADE_DEFS = [
     slot: "Head",
     costs: [16, 28, 42],
     description: "Bigger bite profile and +7 damage per level",
+    unlock: { type: "starter" },
   },
   {
     key: "horns",
@@ -27,6 +28,7 @@ export const UPGRADE_DEFS = [
     slot: "Head",
     costs: [18, 32],
     description: "+4 bite damage and stronger enemy intimidation",
+    unlock: { type: "alpha", speciesId: "boneStalker" },
   },
   {
     key: "crest",
@@ -34,6 +36,7 @@ export const UPGRADE_DEFS = [
     slot: "Back",
     costs: [14, 24],
     description: "Radiant dorsal frill that pushes scavengers off your line",
+    unlock: { type: "ally", speciesId: "duneScavenger" },
   },
   {
     key: "tail",
@@ -41,6 +44,7 @@ export const UPGRADE_DEFS = [
     slot: "Tail",
     costs: [16, 28],
     description: "+18% knockback and sharper strike follow-through",
+    unlock: { type: "alpha", speciesId: "duneScavenger" },
   },
   {
     key: "legs",
@@ -48,6 +52,7 @@ export const UPGRADE_DEFS = [
     slot: "Legs",
     costs: [18, 30, 46],
     description: "+10% movement speed and taller stride",
+    unlock: { type: "starter" },
   },
   {
     key: "spikes",
@@ -55,6 +60,7 @@ export const UPGRADE_DEFS = [
     slot: "Body",
     costs: [18, 32, 46],
     description: "+16 max health and +9% defense per level",
+    unlock: { type: "ally", speciesId: "boneStalker" },
   },
   {
     key: "glow",
@@ -62,6 +68,7 @@ export const UPGRADE_DEFS = [
     slot: "Markings",
     costs: [14, 26, 38],
     description: "-8% bite recovery and brighter bioluminescent markings",
+    unlock: { type: "ally", speciesId: "burrowingHerbivore" },
   },
 ];
 
@@ -203,6 +210,10 @@ export const SPECIES_DEFS = {
     temperament: "Opportunistic",
     dietType: "scavenger",
     aggression: 0.56,
+    socialPattern: ["pose", "charm"],
+    socialPrompt: "Mirror their swagger, then soften the posture.",
+    allyUnlocks: ["crest"],
+    alphaUnlocks: ["tail"],
     packSize: [2, 3],
     uiColor: 0xf2d7a2,
     territory: {
@@ -233,6 +244,10 @@ export const SPECIES_DEFS = {
     temperament: "Territorial",
     dietType: "predator",
     aggression: 0.86,
+    socialPattern: ["pose", "sing"],
+    socialPrompt: "Stand tall, then answer with a low bone-hum.",
+    allyUnlocks: ["spikes"],
+    alphaUnlocks: ["horns"],
     packSize: [1, 2],
     uiColor: 0xff9b72,
     territory: {
@@ -264,6 +279,10 @@ export const SPECIES_DEFS = {
     temperament: "Skittish",
     dietType: "herbivore",
     aggression: 0.2,
+    socialPattern: ["sing", "charm"],
+    socialPrompt: "Start with a soft trill, then glow peacefully.",
+    allyUnlocks: ["glow"],
+    alphaUnlocks: [],
     packSize: [3, 4],
     uiColor: 0x96ffe3,
     territory: {

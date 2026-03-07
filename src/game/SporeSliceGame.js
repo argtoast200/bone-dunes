@@ -79,6 +79,10 @@ const HUD_MAP_RANGE = 26;
 const SPECIES_DISPLAY_NAME = "Boney Snapper";
 const BABY_STAGE_THRESHOLD = 0.35;
 const ELDER_KILL_TARGET = 8;
+const SOCIAL_INTERACT_RANGE = 8.4;
+const SOCIAL_CHAIN_WINDOW = 5.5;
+const SOCIAL_COOLDOWN = 0.85;
+const SOCIAL_EMOTE_DURATION = 0.7;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -94,6 +98,13 @@ const BLOCKED_BROWSER_KEYS = new Set([
   "KeyF",
   "Escape",
 ]);
+const SOCIAL_VERBS = [
+  { key: "sing", code: "KeyQ", label: "Sing", shortLabel: "Q", phrase: "bone-hum" },
+  { key: "pose", code: "KeyE", label: "Pose", shortLabel: "E", phrase: "crest flare" },
+  { key: "charm", code: "KeyR", label: "Charm", shortLabel: "R", phrase: "glow sway" },
+];
+const SOCIAL_VERB_BY_CODE = Object.fromEntries(SOCIAL_VERBS.map((verb) => [verb.code, verb.key]));
+const SOCIAL_VERB_BY_KEY = Object.fromEntries(SOCIAL_VERBS.map((verb) => [verb.key, verb]));
 
 const vectorA = new THREE.Vector3();
 const vectorB = new THREE.Vector3();
@@ -520,6 +531,7 @@ function createEnemy(type) {
     threatGlow: 0,
     recoilLift: 0,
     recoilTilt: 0,
+    socialPulse: 0,
   };
   applyCreatureAppearance(enemy, enemy.traits, enemy.profile, {
     body: spec.color,
@@ -589,6 +601,26 @@ function shiftAlignment(alignment, key, amount) {
   };
   next[key] = Math.max(0.01, next[key] + amount);
   return normalizeAlignment(next);
+}
+
+function getBlueprintLabel(traitKey) {
+  return UPGRADE_DEFS.find((upgrade) => upgrade.key === traitKey)?.label ?? traitKey;
+}
+
+function getBlueprintUnlockText(upgrade, species = null) {
+  if (!upgrade?.unlock || upgrade.unlock.type === "starter") {
+    return "Starter instinct";
+  }
+
+  if (!species) {
+    return "Discover in the dunes";
+  }
+
+  if (upgrade.unlock.type === "ally") {
+    return `Befriend ${species.name}`;
+  }
+
+  return `Defeat ${species.name}`;
 }
 
 function createPaletteFromProfile(profile) {
@@ -1044,6 +1076,17 @@ export class SporeSliceGame {
       const draftBase = this.saveData.speciesCreatures.find((creature) => creature.id === this.saveData.activeCreatureId) ?? this.saveData.speciesCreatures[0];
       this.saveData.evolutionDraft = createEvolutionDraft(draftBase);
     }
+    this.saveData.traitBlueprints = {
+      ...DEFAULT_SAVE.traitBlueprints,
+      ...(this.saveData.traitBlueprints ?? {}),
+    };
+    this.saveData.speciesRelations = Object.keys(DEFAULT_SAVE.speciesRelations).reduce((relations, speciesId) => {
+      relations[speciesId] = {
+        ...DEFAULT_SAVE.speciesRelations[speciesId],
+        ...(this.saveData.speciesRelations?.[speciesId] ?? {}),
+      };
+      return relations;
+    }, {});
     const initialActiveCreature =
       this.saveData.speciesCreatures.find((creature) => creature.id === this.saveData.activeCreatureId)
       ?? this.saveData.speciesCreatures[0];
@@ -1148,6 +1191,14 @@ export class SporeSliceGame {
     this.evolutionFx = {
       timer: 0,
       trait: null,
+    };
+    this.socialEncounter = {
+      speciesId: null,
+      enemyId: null,
+      progress: 0,
+      timer: 0,
+      cooldown: 0,
+      lastVerb: null,
     };
     this.runStats = {
       sessionDna: 0,
@@ -1282,6 +1333,9 @@ export class SporeSliceGame {
       baseMarkingGlow: 0.14,
       evolutionTimer: 0,
       evolutionTrait: null,
+      socialTimer: 0,
+      socialVerb: null,
+      socialSuccess: 0,
       lean: 0,
       bank: 0,
       turnMomentum: 0,
@@ -1327,6 +1381,342 @@ export class SporeSliceGame {
       return false;
     }
     return !compareTraitSets(draft.traits, baseCreature.traits) || !compareProfiles(draft.profile, baseCreature.profile);
+  }
+
+  getSpeciesRelation(speciesId) {
+    if (!speciesId) {
+      return null;
+    }
+
+    if (!this.saveData.speciesRelations?.[speciesId]) {
+      this.saveData.speciesRelations[speciesId] = {
+        ...(DEFAULT_SAVE.speciesRelations?.[speciesId] ?? {
+          status: "wary",
+          rapport: 0,
+          friendship: 0,
+          dominance: 0,
+          allyUnlocked: false,
+          alphaUnlocked: false,
+        }),
+      };
+    }
+
+    return this.saveData.speciesRelations[speciesId];
+  }
+
+  isTraitBlueprintUnlocked(traitKey) {
+    return Boolean(this.saveData.traitBlueprints?.[traitKey]);
+  }
+
+  unlockTraitBlueprints(traitKeys) {
+    const nextUnlocks = [];
+    traitKeys.forEach((traitKey) => {
+      if (!traitKey) {
+        return;
+      }
+      if (!this.isTraitBlueprintUnlocked(traitKey)) {
+        this.saveData.traitBlueprints[traitKey] = true;
+        nextUnlocks.push(traitKey);
+      } else {
+        this.saveData.traitBlueprints[traitKey] = true;
+      }
+    });
+    return nextUnlocks;
+  }
+
+  announceBlueprintUnlock(traitKeys, species, mode = "ally") {
+    if (!traitKeys.length) {
+      return;
+    }
+
+    const labels = traitKeys.map((traitKey) => getBlueprintLabel(traitKey));
+    const summary = `${labels.join(labels.length > 1 ? " and " : "")} can now be grown in Creature Evolution.`;
+    this.player.evolutionTimer = Math.max(this.player.evolutionTimer, 1.15);
+    this.player.evolutionTrait = traitKeys[0];
+    this.evolutionFx.timer = Math.max(this.evolutionFx.timer, 1.15);
+    this.evolutionFx.trait = traitKeys[0];
+    this.state.lastEvolution = {
+      key: `blueprint-${species?.id ?? traitKeys[0]}`,
+      label: mode === "ally" ? "Blueprint Befriended" : "Blueprint Claimed",
+      summary,
+    };
+    this.state.message = mode === "ally"
+      ? `${species.name} trust your line. ${summary}`
+      : `${species.name} yield new anatomy. ${summary}`;
+    this.setEcosystemNotice(
+      mode === "ally"
+        ? `${species.name} now greet your species instead of striking first.`
+        : `${species.name} now remember your line as a threat.`,
+      4.2,
+    );
+    this.spawnBurst(this.player.group.position, {
+      color: species?.uiColor ?? 0x9fffe6,
+      ttl: 0.8,
+      size: 1.5,
+      shards: 11,
+    });
+    this.spawnAttackArc(this.player.group.position.clone().setY(this.player.group.position.y + 0.52), this.player.yaw, {
+      color: species?.uiColor ?? 0x9fffe6,
+      ttl: 0.3,
+      size: 1.2,
+    });
+    this.cameraShake = Math.max(this.cameraShake, 0.14);
+  }
+
+  clearSocialEncounter() {
+    this.socialEncounter.speciesId = null;
+    this.socialEncounter.enemyId = null;
+    this.socialEncounter.progress = 0;
+    this.socialEncounter.timer = 0;
+    this.socialEncounter.cooldown = 0;
+    this.socialEncounter.lastVerb = null;
+  }
+
+  getSocialOpportunity() {
+    if (this.state.mode !== "playing" || this.state.respawnTimer > 0) {
+      return null;
+    }
+
+    let bestEnemy = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    const currentEnemy = this.socialEncounter.enemyId
+      ? this.enemies.find((enemy) => enemy.group.userData.enemyId === this.socialEncounter.enemyId && enemy.deadTimer <= 0 && enemy.group.visible)
+      : null;
+
+    this.enemies.forEach((enemy) => {
+      if (enemy.deadTimer > 0 || !enemy.group.visible) {
+        return;
+      }
+
+      const distance = getDistance2D(enemy.group.position, this.player.group.position);
+      if (distance > SOCIAL_INTERACT_RANGE + 1.2) {
+        return;
+      }
+
+      const relation = this.getSpeciesRelation(enemy.speciesId);
+      const heated = enemy.attackTelegraph > 0.05 || enemy.need === "hunting" || enemy.need === "defending";
+      const score = distance
+        + (enemy === currentEnemy ? -1.6 : 0)
+        + (relation?.status === "friendly" ? 1.2 : relation?.status === "hostile" ? 1.8 : 0)
+        + (heated ? 1.4 : 0);
+
+      if (score < bestScore) {
+        bestScore = score;
+        bestEnemy = enemy;
+      }
+    });
+
+    if (!bestEnemy) {
+      return null;
+    }
+
+    const species = bestEnemy.species;
+    const relation = this.getSpeciesRelation(bestEnemy.speciesId);
+    const sameEncounter = this.socialEncounter.speciesId === bestEnemy.speciesId && this.socialEncounter.enemyId === bestEnemy.group.userData.enemyId;
+    const progress = sameEncounter && this.socialEncounter.timer > 0 ? this.socialEncounter.progress : 0;
+    const expectedVerbKey = species.socialPattern[Math.min(progress, species.socialPattern.length - 1)] ?? species.socialPattern[0];
+    const expectedVerb = SOCIAL_VERB_BY_KEY[expectedVerbKey] ?? SOCIAL_VERBS[0];
+    const distance = getDistance2D(bestEnemy.group.position, this.player.group.position);
+    const heated = bestEnemy.attackTelegraph > 0.05 || bestEnemy.need === "hunting" || bestEnemy.need === "defending";
+    const hostile = relation?.status === "hostile";
+    const canAttempt =
+      distance <= SOCIAL_INTERACT_RANGE
+      && this.socialEncounter.cooldown <= 0
+      && this.player.attackPhase === "idle"
+      && !this.state.editorOpen
+      && (!hostile && !heated || relation?.status === "friendly");
+
+    return {
+      enemyId: bestEnemy.group.userData.enemyId,
+      speciesId: bestEnemy.speciesId,
+      speciesName: species.name,
+      species,
+      relation,
+      distance,
+      progress,
+      sequence: species.socialPattern.map((verbKey) => SOCIAL_VERB_BY_KEY[verbKey]?.label ?? verbKey),
+      expectedVerbKey,
+      expectedVerbLabel: expectedVerb.label,
+      expectedVerbHotkey: expectedVerb.shortLabel,
+      canAttempt,
+      status: relation?.status ?? "wary",
+      hint: hostile
+        ? `${species.name} remember your violence.`
+        : heated
+          ? `${species.name} are too riled up right now.`
+          : species.socialPrompt,
+    };
+  }
+
+  aggravateSpecies(speciesId, { dominance = 0, heavy = false, announce = false } = {}) {
+    const relation = this.getSpeciesRelation(speciesId);
+    const species = SPECIES_DEFS[speciesId];
+    if (!relation || !species) {
+      return { relation: null, species: null, becameHostile: false };
+    }
+
+    const becameHostile = relation.status !== "hostile";
+    const betrayed = relation.status === "friendly";
+    relation.status = "hostile";
+    relation.rapport = clamp(relation.rapport - (heavy ? 54 : 22), -120, 120);
+    relation.dominance += dominance;
+    if (this.socialEncounter.speciesId === speciesId) {
+      this.clearSocialEncounter();
+    }
+
+    if (announce && (betrayed || becameHostile)) {
+      this.setEcosystemNotice(
+        betrayed
+          ? `${species.name} turn on your line after the betrayal.`
+          : `${species.name} snap into hostility.`,
+        4,
+      );
+    }
+
+    this.persistProgress();
+    return { relation, species, becameHostile, betrayed };
+  }
+
+  claimSpeciesDominance(speciesId, { dominance = 1, heavy = false } = {}) {
+    const { relation, species } = this.aggravateSpecies(speciesId, {
+      dominance,
+      heavy,
+      announce: true,
+    });
+    if (!relation || !species) {
+      return [];
+    }
+
+    const unlocked = relation.alphaUnlocked ? [] : this.unlockTraitBlueprints(species.alphaUnlocks ?? []);
+    relation.alphaUnlocked = true;
+    if (unlocked.length) {
+      this.announceBlueprintUnlock(unlocked, species, "alpha");
+    }
+    this.state.hasSave = true;
+    this.persistProgress();
+    return unlocked;
+  }
+
+  befriendSpecies(speciesId, sourceEnemy = null) {
+    const relation = this.getSpeciesRelation(speciesId);
+    const species = SPECIES_DEFS[speciesId];
+    if (!relation || !species) {
+      return [];
+    }
+
+    relation.status = "friendly";
+    relation.rapport = clamp(relation.rapport + 58, -120, 120);
+    relation.friendship += 1;
+    const unlocked = relation.allyUnlocked ? [] : this.unlockTraitBlueprints(species.allyUnlocks ?? []);
+    relation.allyUnlocked = true;
+    this.state.alignment = shiftAlignment(this.state.alignment, "social", 0.038);
+    this.state.hasSave = true;
+    this.enemies.forEach((enemy) => {
+      if (enemy.speciesId !== speciesId || enemy.deadTimer > 0) {
+        return;
+      }
+      enemy.territoryAlert = 0;
+      enemy.attackTelegraph = 0;
+      enemy.attackTargetId = null;
+      enemy.attackTargetKind = "player";
+      enemy.targetCreatureId = null;
+      enemy.socialPulse = Math.max(enemy.socialPulse, enemy === sourceEnemy ? 1 : 0.45);
+      enemy.cooldown = Math.max(enemy.cooldown, 0.3);
+    });
+    if (sourceEnemy) {
+      sourceEnemy.socialPulse = 1;
+    }
+    if (unlocked.length) {
+      this.announceBlueprintUnlock(unlocked, species, "ally");
+    } else {
+      this.state.message = `${species.name} accept your signal and stand down.`;
+      this.setEcosystemNotice(`${species.name} now greet your species instead of flaring up.`, 3.8);
+    }
+    this.persistProgress();
+    return unlocked;
+  }
+
+  performSocialVerb(verbKey) {
+    const verb = SOCIAL_VERB_BY_KEY[verbKey];
+    if (!verb || this.state.mode !== "playing" || this.state.editorOpen || this.state.respawnTimer > 0) {
+      return false;
+    }
+
+    const opportunity = this.getSocialOpportunity();
+    this.player.socialTimer = SOCIAL_EMOTE_DURATION;
+    this.player.socialVerb = verbKey;
+    this.player.socialSuccess = 0.35;
+
+    if (!opportunity) {
+      this.state.message = `${verb.label} fades into empty dunes.`;
+      this.socialEncounter.cooldown = SOCIAL_COOLDOWN * 0.6;
+      return false;
+    }
+
+    const targetEnemy = this.enemies.find((enemy) => enemy.group.userData.enemyId === opportunity.enemyId) ?? null;
+    if (targetEnemy) {
+      targetEnemy.socialPulse = Math.max(targetEnemy.socialPulse, 0.55);
+    }
+
+    if (!opportunity.canAttempt) {
+      if (targetEnemy) {
+        targetEnemy.territoryAlert = Math.max(targetEnemy.territoryAlert, targetEnemy.type === "herbivore" ? 0.38 : 0.62);
+      }
+      this.state.message = opportunity.hint;
+      this.socialEncounter.cooldown = SOCIAL_COOLDOWN;
+      return false;
+    }
+
+    if (opportunity.status === "friendly") {
+      this.state.alignment = shiftAlignment(this.state.alignment, "social", 0.012);
+      this.state.message = `${opportunity.speciesName} echo your ${verb.label.toLowerCase()} back to the line.`;
+      if (targetEnemy) {
+        targetEnemy.socialPulse = 1;
+      }
+      this.socialEncounter.cooldown = SOCIAL_COOLDOWN * 0.8;
+      this.persistProgress();
+      return true;
+    }
+
+    if (verbKey === opportunity.expectedVerbKey) {
+      const nextProgress = opportunity.progress + 1;
+      this.socialEncounter.cooldown = 0;
+      this.socialEncounter.speciesId = opportunity.speciesId;
+      this.socialEncounter.enemyId = opportunity.enemyId;
+      this.socialEncounter.progress = nextProgress;
+      this.socialEncounter.timer = SOCIAL_CHAIN_WINDOW;
+      this.socialEncounter.lastVerb = verbKey;
+      this.player.socialSuccess = 1;
+      this.state.alignment = shiftAlignment(this.state.alignment, "social", 0.02);
+      if (targetEnemy) {
+        targetEnemy.socialPulse = 1;
+      }
+
+      if (nextProgress >= opportunity.sequence.length) {
+        this.clearSocialEncounter();
+        this.befriendSpecies(opportunity.speciesId, targetEnemy);
+        this.socialEncounter.cooldown = SOCIAL_COOLDOWN * 0.55;
+      } else {
+        const nextVerbKey = opportunity.species.socialPattern[nextProgress];
+        const nextVerb = SOCIAL_VERB_BY_KEY[nextVerbKey] ?? SOCIAL_VERBS[0];
+        this.state.message = `${opportunity.speciesName} answer your ${verb.label.toLowerCase()}. Finish with ${nextVerb.label}.`;
+        this.setEcosystemNotice(`${opportunity.speciesName} are listening to your line.`, 2.8);
+        this.persistProgress();
+      }
+
+      return true;
+    }
+
+    if (targetEnemy) {
+      targetEnemy.territoryAlert = Math.max(targetEnemy.territoryAlert, targetEnemy.type === "herbivore" ? 0.48 : 0.72);
+    }
+    this.clearSocialEncounter();
+    this.socialEncounter.cooldown = SOCIAL_COOLDOWN;
+    this.state.alignment = shiftAlignment(this.state.alignment, "adaptive", 0.012);
+    this.state.message = `Wrong signal. ${opportunity.speciesName} recoil from your ${verb.label.toLowerCase()}.`;
+    this.setEcosystemNotice(`${opportunity.speciesName} reject the display.`, 3);
+    this.persistProgress();
+    return false;
   }
 
   setEditorTab(tab) {
@@ -1893,12 +2283,18 @@ export class SporeSliceGame {
     this.currentTerritory = playerTerritory;
 
     this.ecosystem.nests.forEach((nest, index) => {
+      const relation = this.getSpeciesRelation(nest.speciesId);
       if (!nest.destroyed) {
         nest.alert = Math.max(0, nest.alert - dt * 0.55);
         nest.respawnTimer = Math.max(0, nest.respawnTimer - dt);
         nest.marker.position.y = Math.sin(this.elapsed * (1.4 + index * 0.16)) * 0.12 + nest.alert * 0.24;
         nest.marker.rotation.y += dt * (0.22 + index * 0.03);
-        nest.marker.scale.setScalar(1 + nest.alert * 0.06 + (playerTerritory?.speciesId === nest.speciesId ? 0.03 : 0));
+        nest.marker.scale.setScalar(
+          1
+          + nest.alert * 0.06
+          + (playerTerritory?.speciesId === nest.speciesId ? 0.03 : 0)
+          + (relation?.status === "friendly" ? 0.02 : 0),
+        );
       } else {
         nest.alert = 0;
         nest.marker.position.y = damp(nest.marker.position.y, -0.58, 4, dt);
@@ -1907,9 +2303,10 @@ export class SporeSliceGame {
 
     this.ecosystem.territories.forEach((territory, index) => {
       const nest = this.getNestForSpecies(territory.speciesId);
+      const relation = this.getSpeciesRelation(territory.speciesId);
       const playerInside = playerTerritory?.id === territory.id;
       territory.alert = Math.max(0, territory.alert - dt * 0.4);
-      if (playerInside && this.state.mode === "playing" && this.state.zone !== "nest") {
+      if (playerInside && this.state.mode === "playing" && this.state.zone !== "nest" && relation?.status !== "friendly") {
         territory.alert = Math.max(territory.alert, 0.62);
       }
       if (this.ecosystem.activeEvent?.speciesId === territory.speciesId) {
@@ -1927,10 +2324,10 @@ export class SporeSliceGame {
       territory.pulse.scale.setScalar(1 + Math.sin(this.elapsed * (1.6 + index * 0.28)) * 0.04 + alertStrength * 0.1);
       territory.ring.material.opacity = nest?.destroyed
         ? 0.03
-        : 0.05 + presence * 0.04 + alertStrength * 0.17 + (playerInside ? 0.08 : 0);
+        : 0.05 + presence * 0.04 + alertStrength * 0.17 + (playerInside ? (relation?.status === "friendly" ? 0.03 : 0.08) : 0);
       territory.pulse.material.opacity = nest?.destroyed
         ? 0
-        : 0.03 + presence * 0.04 + alertStrength * 0.18 + (playerInside ? 0.12 : 0);
+        : 0.03 + presence * 0.04 + alertStrength * 0.18 + (playerInside ? (relation?.status === "friendly" ? 0.04 : 0.12) : 0);
     });
 
     if (this.state.mode !== "playing" || this.state.editorOpen) {
@@ -2185,9 +2582,9 @@ export class SporeSliceGame {
       this.state.mode = "playing";
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
-        ? "The nest remembers your line. Gather DNA, draft the next body, then hatch it at home."
-        : "Food glows across the dunes. Bring DNA back to the species nest and lay the next egg.";
-      this.runStats.summary = "Fresh hunt. DNA builds the next body, and hatchlings mature through time and kills.";
+        ? "The nest remembers your line. Gather DNA, unlock new parts in the dunes, then hatch the next body at home."
+        : "Food glows across the dunes. Befriend or defeat species, then bring DNA back to the nest and lay the next egg.";
+      this.runStats.summary = "Fresh hunt. DNA builds the next body, and species encounters unlock the parts worth growing.";
       this.state.startedAt = this.elapsed;
       this.state.editorOpen = false;
       this.renderer.domElement.focus();
@@ -2400,6 +2797,13 @@ export class SporeSliceGame {
           this.queueAttack();
         }
         break;
+      case "KeyQ":
+      case "KeyE":
+      case "KeyR":
+        if (pressed && !event.repeat) {
+          this.performSocialVerb(SOCIAL_VERB_BY_CODE[event.code]);
+        }
+        break;
       default:
         break;
     }
@@ -2570,6 +2974,16 @@ export class SporeSliceGame {
       const activeCreature = this.getActiveCreature();
       const activeMaturation = activeCreature ? getCreatureMaturationDisplay(activeCreature) : null;
       const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
+      const socialOpportunity = this.getSocialOpportunity();
+      const blueprintEntries = UPGRADE_DEFS.map((upgrade) => {
+        const sourceSpecies = upgrade.unlock?.speciesId ? SPECIES_DEFS[upgrade.unlock.speciesId] : null;
+        return {
+          key: upgrade.key,
+          label: upgrade.label,
+          unlocked: this.isTraitBlueprintUnlocked(upgrade.key),
+          unlockHint: getBlueprintUnlockText(upgrade, sourceSpecies),
+        };
+      });
       const closestThreat = this.enemies
         .filter((enemy) => enemy.deadTimer <= 0)
         .reduce((closest, enemy) => Math.min(closest, getDistance2D(enemy.group.position, playerPosition)), Number.POSITIVE_INFINITY);
@@ -2623,6 +3037,18 @@ export class SporeSliceGame {
         objective: this.state.objective,
         ecosystemNotice: this.state.ecosystemNotice,
         speciesXp: Math.round(this.state.speciesXp),
+        social: socialOpportunity
+          ? {
+              species: socialOpportunity.speciesName,
+              status: socialOpportunity.status,
+              distance: Number(socialOpportunity.distance.toFixed(1)),
+              expectedVerb: socialOpportunity.expectedVerbLabel,
+              expectedHotkey: socialOpportunity.expectedVerbHotkey,
+              progress: socialOpportunity.progress,
+              sequence: socialOpportunity.sequence,
+              hint: socialOpportunity.hint,
+            }
+          : null,
         gamepad: {
           connected: this.gamepad.connected,
           label: this.gamepad.label,
@@ -2718,6 +3144,14 @@ export class SporeSliceGame {
           modified: this.isDraftModified(),
           traits: draft.traits,
         },
+        blueprints: blueprintEntries,
+        speciesRelations: Object.entries(this.saveData.speciesRelations).map(([speciesId, relation]) => ({
+          speciesId,
+          species: SPECIES_DEFS[speciesId]?.name ?? speciesId,
+          status: relation.status,
+          friendship: relation.friendship,
+          dominance: relation.dominance,
+        })),
         alignment: this.state.alignment,
         food: nearbyFoods,
         carcasses: nearbyCarcasses,
@@ -2754,6 +3188,8 @@ export class SporeSliceGame {
       upgrades: this.state.upgrades,
       creatureProfile: this.state.creatureProfile,
       alignment: this.state.alignment,
+      traitBlueprints: this.saveData.traitBlueprints,
+      speciesRelations: this.saveData.speciesRelations,
     });
   }
 
@@ -2851,6 +3287,13 @@ export class SporeSliceGame {
     const draft = this.saveData.evolutionDraft;
     const currentLevel = draft.traits[key] ?? 0;
     const cost = spec.costs[currentLevel];
+    if (!this.isTraitBlueprintUnlocked(key)) {
+      const sourceSpecies = spec.unlock?.speciesId ? SPECIES_DEFS[spec.unlock.speciesId] : null;
+      this.state.message = `${spec.label} is still locked. ${getBlueprintUnlockText(spec, sourceSpecies)} first.`;
+      this.emitState();
+      return;
+    }
+
     if (cost == null || this.state.dna < cost) {
       return;
     }
@@ -2903,6 +3346,11 @@ export class SporeSliceGame {
       upgrades: { ...starterCreature.traits },
       creatureProfile: { ...starterCreature.profile },
       alignment: { ...DEFAULT_ALIGNMENT },
+      traitBlueprints: { ...DEFAULT_SAVE.traitBlueprints },
+      speciesRelations: Object.keys(DEFAULT_SAVE.speciesRelations).reduce((relations, speciesId) => {
+        relations[speciesId] = { ...DEFAULT_SAVE.speciesRelations[speciesId] };
+        return relations;
+      }, {}),
     };
     this.state.dna = 0;
     this.state.speciesXp = 0;
@@ -2913,6 +3361,7 @@ export class SporeSliceGame {
     this.state.editorTab = "evolution";
     this.state.lastEvolution = null;
     this.state.message = "A fresh clutch stirs in the nest. Shape the first adult, then hatch the next body.";
+    this.clearSocialEncounter();
     this.runStats = {
       sessionDna: 0,
       scavengersDefeated: 0,
@@ -2973,7 +3422,11 @@ export class SporeSliceGame {
     this.player.group.scale.setScalar(this.player.baseScale);
     this.player.evolutionTimer = 0;
     this.player.evolutionTrait = null;
+    this.player.socialTimer = 0;
+    this.player.socialVerb = null;
+    this.player.socialSuccess = 0;
     this.state.editorOpen = false;
+    this.clearSocialEncounter();
     this.clearFeralSurge();
     this.impactSlow = 0;
     this.cameraFovKick = 0;
@@ -3013,6 +3466,7 @@ export class SporeSliceGame {
     enemy.threatGlow = 0;
     enemy.recoilLift = 0;
     enemy.recoilTilt = 0;
+    enemy.socialPulse = 0;
     enemy.targetCreatureId = null;
     enemy.targetFoodId = null;
     enemy.targetCarcassId = null;
@@ -3106,6 +3560,7 @@ export class SporeSliceGame {
     this.cameraShake = Math.max(this.cameraShake, 0.12);
 
     if (nest.hp <= 0) {
+      this.claimSpeciesDominance(nest.speciesId, { dominance: 2, heavy: true });
       nest.destroyed = true;
       nest.ring.material.opacity = 0.03;
       nest.pulse.material.opacity = 0;
@@ -3116,6 +3571,7 @@ export class SporeSliceGame {
       return true;
     }
 
+    this.aggravateSpecies(nest.speciesId, { heavy: true, announce: true });
     this.state.message = `${nest.species.name} nest shudders.`;
     return true;
   }
@@ -3222,6 +3678,15 @@ export class SporeSliceGame {
       rise: 0.08,
     });
     this.state.alignment = shiftAlignment(this.state.alignment, "aggressive", enemy.type === "predator" ? 0.012 : 0.008);
+    if (sourceKind === "player" && enemy.hp > 0) {
+      const relation = this.getSpeciesRelation(enemy.speciesId);
+      if (relation && relation.status !== "hostile") {
+        this.aggravateSpecies(enemy.speciesId, {
+          heavy: enemy.type === "predator",
+          announce: true,
+        });
+      }
+    }
 
     if (enemy.hp <= 0) {
       enemy.deadTimer = enemy.temporary ? 0.8 : enemy.species.respawnDelay + Math.random() * 2.4;
@@ -3233,6 +3698,10 @@ export class SporeSliceGame {
         attacker.targetCarcassId = carcass.id;
       }
       if (sourceKind === "player") {
+        const unlockedAlpha = this.claimSpeciesDominance(enemy.speciesId, {
+          dominance: enemy.type === "predator" ? 2 : 1,
+          heavy: enemy.type === "predator",
+        });
         const activeCreature = this.getActiveCreature();
         if (activeCreature) {
           activeCreature.killCount += 1;
@@ -3252,6 +3721,9 @@ export class SporeSliceGame {
             source: enemy.type === "herbivore" ? "herbivore" : enemy.type,
           },
         );
+        if (unlockedAlpha.length) {
+          this.state.message = `${this.state.message} ${unlockedAlpha.map((traitKey) => getBlueprintLabel(traitKey)).join(" and ")} unlocked in Creature Evolution.`;
+        }
       } else if (attacker && attacker.speciesId !== enemy.speciesId) {
         this.setEcosystemNotice(
           `${attacker.species.name} brings down a ${enemy.species.name.toLowerCase()}.`,
@@ -3303,6 +3775,7 @@ export class SporeSliceGame {
       return;
     }
 
+    this.clearSocialEncounter();
     this.player.attackTimer = ATTACK_DURATION;
     this.player.attackCooldown = this.playerStats.biteCooldown;
     this.player.attackPhase = "windup";
@@ -3586,6 +4059,9 @@ export class SporeSliceGame {
 
       const territory = this.getTerritoryForSpecies(enemy.speciesId);
       const nest = this.getNestForSpecies(enemy.speciesId);
+      const relation = this.getSpeciesRelation(enemy.speciesId);
+      const speciesFriendlyToPlayer = relation?.status === "friendly";
+      const speciesHostileToPlayer = relation?.status === "hostile";
       const packMembers = packMap.get(enemy.packId) ?? [enemy];
       const leader = enemy.isLeader
         ? enemy
@@ -3621,6 +4097,7 @@ export class SporeSliceGame {
       enemy.threatGlow = Math.max(0, enemy.threatGlow - dt * 2.5);
       enemy.recoilLift = Math.max(0, enemy.recoilLift - dt * 3.8);
       enemy.recoilTilt = Math.max(0, enemy.recoilTilt - dt * 4.6);
+      enemy.socialPulse = Math.max(0, enemy.socialPulse - dt * 2.2);
       enemy.interactionCooldown = Math.max(0, enemy.interactionCooldown - dt);
       enemy.grazeTimer = Math.max(0, enemy.grazeTimer - dt);
       enemy.territoryAlert = Math.max(0, enemy.territoryAlert - dt * 0.42);
@@ -3637,11 +4114,14 @@ export class SporeSliceGame {
         1,
       );
 
-      if (playerInsideTerritory && !playerInNest && distanceToPlayer < (territory?.radius ?? 12) + 5) {
+      if (playerInsideTerritory && !playerInNest && !speciesFriendlyToPlayer && distanceToPlayer < (territory?.radius ?? 12) + 5) {
         enemy.territoryAlert = Math.max(enemy.territoryAlert, enemy.type === "herbivore" ? 0.44 : 0.78);
       }
       if (nest?.alert > 0) {
         enemy.territoryAlert = Math.max(enemy.territoryAlert, nest.alert);
+      }
+      if (speciesHostileToPlayer && !playerInNest) {
+        enemy.territoryAlert = Math.max(enemy.territoryAlert, enemy.type === "predator" ? 0.48 : 0.28);
       }
 
       if (enemy.targetCreatureId && !enemyById.has(enemy.targetCreatureId)) {
@@ -3710,6 +4190,7 @@ export class SporeSliceGame {
       } else if (enemy.attackTelegraph > 0) {
         enemy.state = enemy.type === "predator" ? "winding up" : enemy.type === "herbivore" ? "bracing" : "feinting";
         const previousTelegraph = enemy.attackTelegraph;
+        const telegraphCancelled = enemy.attackTargetKind === "player" && speciesFriendlyToPlayer;
         enemy.attackTelegraph = Math.max(0, enemy.attackTelegraph - dt);
 
         let strikeTargetPosition = null;
@@ -3721,7 +4202,10 @@ export class SporeSliceGame {
           strikeTargetPosition = this.player.group.position;
         }
 
-        if (strikeTargetPosition) {
+        if (telegraphCancelled) {
+          enemy.attackTelegraph = 0;
+          enemy.attackTargetId = null;
+        } else if (strikeTargetPosition) {
           enemy.attackVector.copy(vectorC.subVectors(strikeTargetPosition, position).setY(0));
           if (enemy.attackVector.lengthSq() > 0.0001) {
             enemy.attackVector.normalize();
@@ -3732,7 +4216,7 @@ export class SporeSliceGame {
           enemy.attackTelegraph = 0;
         }
 
-        if (enemy.attackTelegraph <= 0 && previousTelegraph > 0) {
+        if (!telegraphCancelled && enemy.attackTelegraph <= 0 && previousTelegraph > 0) {
           const lungeSpeed = enemy.variant === "hornedPredator" ? 8.3 : enemy.type === "predator" ? 7.4 : enemy.type === "herbivore" ? 4.8 : 5.2;
           enemy.velocity.addScaledVector(enemy.attackVector, lungeSpeed);
 
@@ -3761,7 +4245,17 @@ export class SporeSliceGame {
         }
 
         if (enemy.type === "herbivore") {
-          const playerThreat = !playerInNest && distanceToPlayer < 7.2 && (playerInsideTerritory || intimidationPressure > 0.1 || this.state.zone === "danger");
+          if (speciesFriendlyToPlayer && !migrationActive && !playerInNest && distanceToPlayer < 8.4) {
+            nextNeed = "patrolling";
+            enemy.state = "gathering";
+            const escortAngle = this.elapsed * 0.88 + enemy.groupIndex * Math.PI * 0.82;
+            targetPoint = {
+              x: this.player.group.position.x + Math.cos(escortAngle) * 3.1,
+              z: this.player.group.position.z + Math.sin(escortAngle) * 2.4,
+            };
+            desiredSpeed = enemy.spec.speed * 0.42;
+          } else {
+          const playerThreat = !playerInNest && !speciesFriendlyToPlayer && distanceToPlayer < 7.2 && (playerInsideTerritory || intimidationPressure > 0.1 || this.state.zone === "danger");
           const shouldFlee = Boolean(predatorThreat && predatorThreat.distance < 11.5) || playerThreat || enemy.hp < enemy.maxHp * 0.55 || enemy.fleeTimer > 0;
           if (shouldFlee) {
             nextNeed = "fleeing";
@@ -3812,13 +4306,23 @@ export class SporeSliceGame {
             desiredDirection = enemy.direction;
             desiredSpeed = enemy.spec.speed * 0.48;
           }
+          }
         } else if (enemy.type === "scavenger") {
           const guardPredator = carcassTarget?.carcass.guardedBy ? enemyById.get(carcassTarget.carcass.guardedBy) ?? null : null;
           const predatorPressure = predatorThreat && predatorThreat.distance < (enemy.variant === "armoredScavenger" ? 5.1 : 6.2);
           const shouldFlee = enemy.variant !== "armoredScavenger"
-            && (enemy.hp < enemy.maxHp * 0.45 || enemy.fleeTimer > 0 || predatorPressure || (intimidationPressure > 0.16 && distanceToPlayer < 6.2));
+            && (enemy.hp < enemy.maxHp * 0.45 || enemy.fleeTimer > 0 || predatorPressure || (!speciesFriendlyToPlayer && intimidationPressure > 0.16 && distanceToPlayer < 6.2));
 
-          if (shouldFlee) {
+          if (speciesFriendlyToPlayer && !migrationActive && !playerInNest && distanceToPlayer < 7.4) {
+            nextNeed = "patrolling";
+            enemy.state = "shadowing";
+            const escortAngle = this.elapsed * 0.82 + enemy.groupIndex * Math.PI * 0.9;
+            targetPoint = {
+              x: this.player.group.position.x + Math.cos(escortAngle) * 3.4,
+              z: this.player.group.position.z + Math.sin(escortAngle) * 2.8,
+            };
+            desiredSpeed = enemy.spec.speed * (enemy.variant === "armoredScavenger" ? 0.36 : 0.44);
+          } else if (shouldFlee) {
             nextNeed = "fleeing";
             enemy.state = "fleeing";
             if (predatorThreat && predatorThreat.distance < 6.8) {
@@ -3854,7 +4358,7 @@ export class SporeSliceGame {
               enemy.state = "scavenging";
               desiredSpeed = enemy.spec.speed * (enemy.variant === "armoredScavenger" ? 0.68 : 0.8);
             }
-          } else if (!playerInNest && (playerInsideTerritory || (distanceToPlayer < enemy.spec.aggroRadius && (playerVulnerable || enemy.territoryAlert > 0.45 || this.state.zone === "danger")))) {
+          } else if (!playerInNest && !speciesFriendlyToPlayer && (playerInsideTerritory || (distanceToPlayer < enemy.spec.aggroRadius && (playerVulnerable || enemy.territoryAlert > 0.45 || this.state.zone === "danger" || speciesHostileToPlayer)))) {
             nextNeed = "defending";
             targetKind = "player";
             enemy.state = "harassing";
@@ -3897,7 +4401,16 @@ export class SporeSliceGame {
             desiredSpeed = enemy.spec.speed * 0.46;
           }
         } else {
-          if (!playerInNest && playerInsideTerritory) {
+          if (speciesFriendlyToPlayer && !migrationActive && !playerInNest && distanceToPlayer < 9.2) {
+            nextNeed = "patrolling";
+            enemy.state = "watching";
+            const escortAngle = this.elapsed * 0.68 + enemy.groupIndex * Math.PI * 0.74;
+            targetPoint = {
+              x: this.player.group.position.x + Math.cos(escortAngle) * 4.1,
+              z: this.player.group.position.z + Math.sin(escortAngle) * 3.3,
+            };
+            desiredSpeed = enemy.spec.speed * 0.34;
+          } else if (!playerInNest && !speciesFriendlyToPlayer && playerInsideTerritory) {
             nextNeed = "defending";
             targetKind = "player";
             enemy.state = "territorial";
@@ -3921,7 +4434,7 @@ export class SporeSliceGame {
             targetKind = "creature";
             targetEnemy = preyTarget.enemy;
             enemy.state = "hunting";
-          } else if (!playerInNest && distanceToPlayer < enemy.spec.aggroRadius && (this.state.zone === "danger" || playerVulnerable || enemy.territoryAlert > 0.42)) {
+          } else if (!playerInNest && !speciesFriendlyToPlayer && distanceToPlayer < enemy.spec.aggroRadius && (this.state.zone === "danger" || playerVulnerable || enemy.territoryAlert > 0.42 || speciesHostileToPlayer)) {
             nextNeed = "hunting";
             targetKind = "player";
             enemy.state = "chasing";
@@ -4072,6 +4585,7 @@ export class SporeSliceGame {
       });
       const telegraphStrength = enemy.attackTelegraph > 0 ? enemy.attackTelegraph / telegraphDuration : 0;
       const staggerStrength = enemy.staggerTimer > 0 ? Math.min(1, enemy.staggerTimer / (enemy.type === "predator" ? 0.18 : 0.3)) : 0;
+      const friendlyAura = speciesFriendlyToPlayer ? 0.16 : 0;
       const pressureGlow = enemy.territoryAlert * 0.16 + (nextNeed === "migrating" ? 0.08 : 0) + (nextNeed === "hunting" || nextNeed === "defending" ? 0.12 : 0);
       const fleeLean = nextNeed === "fleeing" ? 0.12 : 0;
       const hitYawOffset = enemy.hitDirection.lengthSq() > 0.001
@@ -4093,17 +4607,17 @@ export class SporeSliceGame {
       enemy.refs.tailGroup.rotation.x = Math.sin(gait * 0.5) * 0.18 + telegraphStrength * 0.12 + staggerStrength * 0.18 + fleeLean * 0.12 + enemy.recoilLift * 0.08;
       enemy.refs.tailGroup.rotation.z = -hitLateral * 0.14;
       enemy.refs.materials.skin.emissive.setRGB(
-        enemy.hitFlash * 0.8 + telegraphStrength * 0.8 + enemy.threatGlow * 0.18 + pressureGlow * 0.55,
-        enemy.hitFlash * 0.25 + telegraphStrength * 0.2 + pressureGlow * 0.18,
-        enemy.hitFlash * 0.18 + pressureGlow * 0.12,
+        enemy.hitFlash * 0.8 + telegraphStrength * 0.8 + enemy.threatGlow * 0.18 + pressureGlow * 0.55 + friendlyAura * 0.08,
+        enemy.hitFlash * 0.25 + telegraphStrength * 0.2 + pressureGlow * 0.18 + enemy.socialPulse * 0.28 + friendlyAura * 0.26,
+        enemy.hitFlash * 0.18 + pressureGlow * 0.12 + enemy.socialPulse * 0.44 + friendlyAura * 0.32,
       );
-      enemy.refs.materials.skin.emissiveIntensity = enemy.hitFlash * 0.9 + telegraphStrength * 1.1 + enemy.threatGlow * 0.22 + pressureGlow * 0.46;
-      enemy.refs.materials.accent.emissiveIntensity = enemy.baseBackGlow + telegraphStrength * 0.85 + enemy.threatGlow * 0.2 + pressureGlow * 0.32;
-      enemy.refs.materials.markings.emissiveIntensity = enemy.baseMarkingGlow + enemy.threatGlow * 0.18 + telegraphStrength * 0.12 + pressureGlow * 0.22;
+      enemy.refs.materials.skin.emissiveIntensity = enemy.hitFlash * 0.9 + telegraphStrength * 1.1 + enemy.threatGlow * 0.22 + pressureGlow * 0.46 + enemy.socialPulse * 0.24;
+      enemy.refs.materials.accent.emissiveIntensity = enemy.baseBackGlow + telegraphStrength * 0.85 + enemy.threatGlow * 0.2 + pressureGlow * 0.32 + enemy.socialPulse * 0.36 + friendlyAura * 0.22;
+      enemy.refs.materials.markings.emissiveIntensity = enemy.baseMarkingGlow + enemy.threatGlow * 0.18 + telegraphStrength * 0.12 + pressureGlow * 0.22 + enemy.socialPulse * 0.58 + friendlyAura * 0.3;
       enemy.group.scale.set(
-        enemy.baseScale * (1 + enemy.impactPulse * 0.08 + pressureGlow * 0.02),
+        enemy.baseScale * (1 + enemy.impactPulse * 0.08 + pressureGlow * 0.02 + enemy.socialPulse * 0.03),
         enemy.baseScale * (1 - enemy.impactPulse * 0.06 - staggerStrength * 0.03 - fleeLean * 0.02),
-        enemy.baseScale * (1 + enemy.impactPulse * 0.14 + staggerStrength * 0.05 + pressureGlow * 0.03),
+        enemy.baseScale * (1 + enemy.impactPulse * 0.14 + staggerStrength * 0.05 + pressureGlow * 0.03 + enemy.socialPulse * 0.05),
       );
     });
   }
@@ -4363,8 +4877,13 @@ export class SporeSliceGame {
     this.player.attackRecoil = Math.max(0, this.player.attackRecoil - dt * 4.8);
     this.player.attackImpact = Math.max(0, this.player.attackImpact - dt * 5.4);
     this.player.evolutionTimer = Math.max(0, this.player.evolutionTimer - dt);
+    this.player.socialTimer = Math.max(0, this.player.socialTimer - dt);
+    this.player.socialSuccess = Math.max(0, this.player.socialSuccess - dt * 1.8);
     if (this.player.evolutionTimer <= 0) {
       this.player.evolutionTrait = null;
+    }
+    if (this.player.socialTimer <= 0) {
+      this.player.socialVerb = null;
     }
 
     if (this.input.attackQueued) {
@@ -4389,28 +4908,34 @@ export class SporeSliceGame {
         : this.player.attackPhase === "recovery"
           ? recoveryStrength * 0.32
           : 0;
+    const socialPulse = this.player.socialTimer > 0
+      ? Math.sin((1 - this.player.socialTimer / SOCIAL_EMOTE_DURATION) * Math.PI)
+      : 0;
+    const singPose = this.player.socialVerb === "sing" ? socialPulse : 0;
+    const posePose = this.player.socialVerb === "pose" ? socialPulse : 0;
+    const charmPose = this.player.socialVerb === "charm" ? socialPulse : 0;
     const strikeArc = this.player.attackPhase === "strike" ? Math.sin(attackPhaseStrength * Math.PI) : 0;
     const recoverArc = this.player.attackPhase === "recovery" ? attackPhaseStrength : 0;
     const biteSnap = jawOpen + this.player.attackRecoil * 0.9 + strikeArc * 0.4 + this.player.attackImpact * 0.55;
     const readyPulse = this.player.attackPhase === "idle" && this.player.attackCooldown <= 0.02 ? Math.sin(this.elapsed * 8.5) * 0.5 + 0.5 : 0;
-    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.95 + this.player.attackRecoil * 0.14 + this.player.attackImpact * 0.12;
-    this.player.refs.headPivot.position.z = 2.1 - windupStrength * 0.58 + strikeArc * 0.82 + recoverArc * 0.18;
-    this.player.refs.headPivot.position.y = 0.35 + windupStrength * 0.08 - strikeArc * 0.14 + this.player.attackImpact * 0.04;
-    this.player.refs.headPivot.position.x = this.player.bank * 0.16;
-    this.player.refs.body.position.z = -windupStrength * 0.34 + strikeArc * 0.28 - recoverArc * 0.05;
-    this.player.refs.body.position.y = -windupStrength * 0.12 + strikeArc * 0.08 - this.player.lean * 0.04;
+    this.player.refs.jaw.rotation.x = Math.PI * 0.48 + jawOpen * 0.95 + this.player.attackRecoil * 0.14 + this.player.attackImpact * 0.12 + singPose * 0.08;
+    this.player.refs.headPivot.position.z = 2.1 - windupStrength * 0.58 + strikeArc * 0.82 + recoverArc * 0.18 + singPose * 0.08 + charmPose * 0.05;
+    this.player.refs.headPivot.position.y = 0.35 + windupStrength * 0.08 - strikeArc * 0.14 + this.player.attackImpact * 0.04 + singPose * 0.12;
+    this.player.refs.headPivot.position.x = this.player.bank * 0.16 + posePose * 0.08;
+    this.player.refs.body.position.z = -windupStrength * 0.34 + strikeArc * 0.28 - recoverArc * 0.05 - posePose * 0.06;
+    this.player.refs.body.position.y = -windupStrength * 0.12 + strikeArc * 0.08 - this.player.lean * 0.04 + posePose * 0.05;
     this.player.refs.body.position.x = -this.player.bank * 0.12;
-    this.player.refs.back.position.z = -0.7 - windupStrength * 0.14 + strikeArc * 0.08;
-    this.player.refs.body.rotation.x = -this.player.lean * 0.14 + windupStrength * 0.2 - strikeArc * 0.28 + recoverArc * 0.08;
-    this.player.refs.body.rotation.z = this.player.bank * 0.16;
-    this.player.refs.back.rotation.x = -this.player.lean * 0.08 + windupStrength * 0.1 - strikeArc * 0.14;
-    this.player.refs.back.rotation.z = this.player.bank * 0.12;
-    this.player.refs.headPivot.rotation.x = jawOpen * -0.36 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.06 - this.player.attackRecoil * 0.15 - windupStrength * 0.28 + strikeArc * 0.46 + recoverArc * 0.1;
-    this.player.refs.headPivot.rotation.z = this.player.bank * 0.12 + this.player.attackImpact * 0.05;
-    this.player.refs.tailGroup.rotation.x = Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.2 + speedRatio * 0.1 + surgeCharge * 0.08 + windupStrength * 0.12 - strikeArc * 0.18 + recoverArc * 0.08;
-    this.player.refs.tailGroup.rotation.z = -this.player.bank * 0.12;
+    this.player.refs.back.position.z = -0.7 - windupStrength * 0.14 + strikeArc * 0.08 - posePose * 0.04;
+    this.player.refs.body.rotation.x = -this.player.lean * 0.14 + windupStrength * 0.2 - strikeArc * 0.28 + recoverArc * 0.08 - posePose * 0.12;
+    this.player.refs.body.rotation.z = this.player.bank * 0.16 + posePose * 0.14;
+    this.player.refs.back.rotation.x = -this.player.lean * 0.08 + windupStrength * 0.1 - strikeArc * 0.14 + singPose * 0.08;
+    this.player.refs.back.rotation.z = this.player.bank * 0.12 + posePose * 0.08;
+    this.player.refs.headPivot.rotation.x = jawOpen * -0.36 + Math.sin(this.elapsed * 2.6) * 0.02 - speedRatio * 0.06 - this.player.attackRecoil * 0.15 - windupStrength * 0.28 + strikeArc * 0.46 + recoverArc * 0.1 + singPose * 0.22;
+    this.player.refs.headPivot.rotation.z = this.player.bank * 0.12 + this.player.attackImpact * 0.05 + posePose * 0.08;
+    this.player.refs.tailGroup.rotation.x = Math.sin(this.elapsed * 3.2) * 0.14 + jawOpen * 0.2 + speedRatio * 0.1 + surgeCharge * 0.08 + windupStrength * 0.12 - strikeArc * 0.18 + recoverArc * 0.08 + charmPose * 0.22;
+    this.player.refs.tailGroup.rotation.z = -this.player.bank * 0.12 - charmPose * 0.06;
     this.player.group.rotation.z = this.player.bank * 0.1;
-    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16 + readyPulse * 0.08;
+    this.player.groundMarker.material.opacity = 0.26 + Math.sin(this.elapsed * 5.5) * 0.04 + biteSnap * 0.12 + this.player.pickupPulse * 0.18 + speedRatio * 0.08 + surgeCharge * 0.16 + readyPulse * 0.08 + socialPulse * 0.08;
     this.player.groundMarker.rotation.z += dt * (0.35 + speedRatio * 0.6);
     this.player.groundMarker.scale.setScalar(1 + this.player.pickupPulse * 0.12 + surgeCharge * 0.14 + readyPulse * 0.05);
 
@@ -4419,30 +4944,30 @@ export class SporeSliceGame {
     const evolutionPulse = this.player.evolutionTimer > 0 ? Math.sin((1 - this.player.evolutionTimer / 1.45) * Math.PI * 6) * 0.5 + 0.5 : 0;
     this.player.refs.materials.skin.emissive.setRGB(
       tintStrength * 0.5 + feralGlow * 0.12,
-      tintStrength * 0.1 + feralGlow * 0.42,
-      tintStrength * 0.08 + feralGlow * 0.28,
+      tintStrength * 0.1 + feralGlow * 0.42 + socialPulse * 0.14,
+      tintStrength * 0.08 + feralGlow * 0.28 + socialPulse * 0.28,
     );
-    this.player.refs.materials.skin.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2 + feralGlow * 0.55;
-    this.player.refs.materials.accent.emissiveIntensity = this.player.baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08 + evolutionPulse * 0.55;
-    this.player.refs.materials.markings.emissiveIntensity = this.player.baseMarkingGlow + feralGlow * 0.55 + evolutionPulse * 0.85;
+    this.player.refs.materials.skin.emissiveIntensity = tintStrength + this.player.pickupPulse * 0.2 + feralGlow * 0.55 + socialPulse * 0.18;
+    this.player.refs.materials.accent.emissiveIntensity = this.player.baseBackGlow + feralGlow * 0.9 + this.player.pickupPulse * 0.08 + evolutionPulse * 0.55 + socialPulse * 0.22;
+    this.player.refs.materials.markings.emissiveIntensity = this.player.baseMarkingGlow + feralGlow * 0.55 + evolutionPulse * 0.85 + socialPulse * 0.7;
     this.player.group.scale.set(
-      this.player.baseScale * (1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.05 + strikeArc * 0.09 + evolutionPulse * 0.02),
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.04 + feralGlow * 0.02 - windupStrength * 0.05 + strikeArc * 0.09 + evolutionPulse * 0.02 + socialPulse * 0.02),
       this.player.baseScale * (1 - this.player.attackRecoil * 0.05 + tintStrength * 0.02 - windupStrength * 0.06 + strikeArc * 0.03 - evolutionPulse * 0.01),
-      this.player.baseScale * (1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.08 + strikeArc * 0.12 + evolutionPulse * 0.03),
+      this.player.baseScale * (1 + this.player.attackRecoil * 0.09 + feralGlow * 0.03 + windupStrength * 0.08 + strikeArc * 0.12 + evolutionPulse * 0.03 + socialPulse * 0.03),
     );
 
     this.state.zone = getZoneName(this.player.group.position);
 
     if (this.state.zone === "nest" && this.state.editorOpen) {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 18);
-      this.state.objective = "Creature Evolution spends DNA on the next egg. Species Nest swaps bodies and fast evolves hatchlings.";
+      this.state.objective = "Creature Evolution grows unlocked blueprints. Species Nest swaps bodies and fast evolves hatchlings.";
     } else if (this.state.zone === "nest") {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
-      this.state.objective = "Species nest: heal, bank DNA into a new egg, hatch it, then grow the newborn in the dunes.";
+      this.state.objective = "Species nest: heal, spend DNA on unlocked parts, hatch the next body, then grow it in the dunes.";
     } else if (this.state.zone === "danger") {
-      this.state.objective = "Territory zone: richer DNA, tighter stamina, and predators that commit.";
+      this.state.objective = "Territory zone: richer DNA, tighter stamina, and species encounters that can unlock harder body plans.";
     } else {
-      this.state.objective = "Bone dunes: gather DNA, hunt what you can finish, then bring the next body plan home.";
+      this.state.objective = "Bone dunes: gather DNA, befriend or dominate species, then bring the next body plan home.";
     }
   }
 
@@ -4655,6 +5180,20 @@ export class SporeSliceGame {
 
   update(dt) {
     this.elapsed += dt;
+    this.socialEncounter.cooldown = Math.max(0, this.socialEncounter.cooldown - dt);
+    if (this.socialEncounter.timer > 0) {
+      this.socialEncounter.timer = Math.max(0, this.socialEncounter.timer - dt);
+      if (this.socialEncounter.timer <= 0) {
+        this.clearSocialEncounter();
+      } else {
+        const encounterEnemy = this.socialEncounter.enemyId
+          ? this.enemies.find((enemy) => enemy.group.userData.enemyId === this.socialEncounter.enemyId && enemy.deadTimer <= 0 && enemy.group.visible)
+          : null;
+        if (!encounterEnemy || getDistance2D(encounterEnemy.group.position, this.player.group.position) > SOCIAL_INTERACT_RANGE + 2) {
+          this.clearSocialEncounter();
+        }
+      }
+    }
     const simDt = dt * (this.impactSlow > 0 ? 0.24 : 1);
     this.impactSlow = Math.max(0, this.impactSlow - dt);
     this.pollGamepadInput();
@@ -4696,14 +5235,21 @@ export class SporeSliceGame {
       this.state.message = this.state.lastEvolution
         ? `${this.state.lastEvolution.label} set. ${this.state.lastEvolution.summary}.`
         : this.state.editorTab === "evolution"
-          ? "Creature Evolution open. Spend DNA on a new body plan, then lay the egg."
-          : "Species Nest open. Swap between bodies or fast evolve a hatchling with species XP.";
-    } else if (this.state.mode === "playing" && this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
-      this.state.message = `Feral surge x${this.surge.level}. Keep feeding it with blooms or kills before it burns out.`;
-    } else if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
-      this.state.message = "The air thickens with heat. Better rewards, worse odds.";
-    } else if (this.state.mode === "playing" && this.state.zone === "nest" && this.elapsed % 10 < dt) {
-      this.state.message = "The species nest is calm. Hatchlings grow faster when they survive real hunts.";
+          ? "Creature Evolution open. Spend DNA on unlocked blueprints, then lay the egg."
+          : "Species Nest open. Swap between bodies, lay the egg, or fast evolve a hatchling with species XP.";
+    } else if (this.state.mode === "playing" && !this.state.editorOpen) {
+      const socialOpportunity = this.getSocialOpportunity();
+      if (socialOpportunity && socialOpportunity.status !== "friendly" && socialOpportunity.canAttempt && this.elapsed % 7 < dt) {
+        this.state.message = `${socialOpportunity.speciesName} are listening. ${socialOpportunity.expectedVerbHotkey} ${socialOpportunity.expectedVerbLabel} comes next.`;
+      } else if (socialOpportunity && socialOpportunity.status === "friendly" && this.elapsed % 11 < dt) {
+        this.state.message = `${socialOpportunity.speciesName} recognize your line and keep their distance.`;
+      } else if (this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
+        this.state.message = `Feral surge x${this.surge.level}. Keep feeding it with blooms or kills before it burns out.`;
+      } else if (this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
+        this.state.message = "The air thickens with heat. Better rewards, worse odds.";
+      } else if (this.state.zone === "nest" && this.elapsed % 10 < dt) {
+        this.state.message = "The species nest is calm. Befriend or defeat species to unlock new body parts.";
+      }
     }
 
     if (this.elapsed % 0.2 < dt) {
@@ -4743,11 +5289,14 @@ export class SporeSliceGame {
     const draftModified = this.isDraftModified();
     const draftStats = computePlayerStats(draft.traits, draft.profile);
     const draftMaturityTarget = computeCreatureMaturityTarget(draft);
+    const socialOpportunity = this.getSocialOpportunity();
     const upgradeEntries = UPGRADE_DEFS.map((upgrade) => {
       const level = draft.traits[upgrade.key] ?? 0;
       const cost = upgrade.costs[level] ?? null;
       const nextTraits = cost == null ? draft.traits : { ...draft.traits, [upgrade.key]: level + 1 };
       const nextMaturityTarget = cost == null ? draftMaturityTarget : computeCreatureMaturityTarget({ traits: nextTraits, profile: draft.profile });
+      const sourceSpecies = upgrade.unlock?.speciesId ? SPECIES_DEFS[upgrade.unlock.speciesId] : null;
+      const blueprintUnlocked = this.isTraitBlueprintUnlocked(upgrade.key);
       return {
         ...upgrade,
         level,
@@ -4756,7 +5305,11 @@ export class SporeSliceGame {
         nextSummary: cost == null ? "Complete" : describeTraitLevel(upgrade.key, level + 1),
         growthDelta: Math.max(0, nextMaturityTarget - draftMaturityTarget),
         maxed: cost == null,
-        canBuy: this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
+        blueprintUnlocked,
+        unlockHint: getBlueprintUnlockText(upgrade, sourceSpecies),
+        sourceSpecies: sourceSpecies?.name ?? null,
+        unlockType: upgrade.unlock?.type ?? "starter",
+        canBuy: blueprintUnlocked && this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
       };
     });
     const identity = activeCreature
@@ -4780,6 +5333,7 @@ export class SporeSliceGame {
     const attackHudVisible = this.player.combatHudTimer > 0 || (this.state.zone !== "nest" && Number.isFinite(closestThreat) && closestThreat < 8.5);
     const currentTerritory = this.currentTerritory ?? this.getCurrentTerritoryForPosition(this.player.group.position);
     const territorySpecies = currentTerritory ? SPECIES_DEFS[currentTerritory.speciesId] : null;
+    const unlockedBlueprints = UPGRADE_DEFS.reduce((count, upgrade) => count + (this.isTraitBlueprintUnlocked(upgrade.key) ? 1 : 0), 0);
     const nearbySpecies = sortByDistance(
       this.player.group.position,
       this.enemies.filter((enemy) => enemy.deadTimer <= 0),
@@ -4918,6 +5472,29 @@ export class SporeSliceGame {
             progress: 1 - clamp(this.ecosystem.activeEvent.timer / this.ecosystem.activeEvent.duration, 0, 1),
           }
         : null,
+      socialHint: socialOpportunity
+        ? {
+            speciesName: socialOpportunity.speciesName,
+            status: socialOpportunity.status,
+            distance: Number(socialOpportunity.distance.toFixed(1)),
+            expectedVerb: socialOpportunity.expectedVerbLabel,
+            expectedHotkey: socialOpportunity.expectedVerbHotkey,
+            sequence: socialOpportunity.sequence,
+            progress: socialOpportunity.progress,
+            hint: socialOpportunity.hint,
+          }
+        : null,
+      blueprintSummary: {
+        unlocked: unlockedBlueprints,
+        total: UPGRADE_DEFS.length,
+      },
+      speciesRelations: Object.entries(this.saveData.speciesRelations).map(([speciesId, relation]) => ({
+        speciesId,
+        speciesName: SPECIES_DEFS[speciesId]?.name ?? speciesId,
+        status: relation.status,
+        friendship: relation.friendship,
+        dominance: relation.dominance,
+      })),
       gamepadConnected: this.gamepad.connected,
       gamepadLabel: this.gamepad.label,
       speciesName: SPECIES_DISPLAY_NAME,
@@ -5001,12 +5578,12 @@ export class SporeSliceGame {
         maturityTarget: draftMaturityTarget,
       },
       controlsHint: this.gamepad.connected
-        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor"
+        ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor. Keyboard Q/E/R sends social signals."
         : this.state.mode === "menu"
-          ? "Left click move, WASD/Arrows steer, Space/right click bite, then return to the nest to evolve"
+          ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve"
         : this.state.editorOpen
-          ? "Species nest open. Creature Evolution spends DNA; Species Nest swaps bodies and fast evolves hatchlings."
-          : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite. Bring DNA home to hatch new bodies.",
+          ? "Species nest open. Creature Evolution grows unlocked blueprints; Species Nest swaps bodies and fast evolves hatchlings."
+          : "Left click move, WASD/Arrows steer, Shift sprint, Q/E/R signal species, Space/right click bite. Bring DNA home to hatch new bodies.",
     });
   }
 

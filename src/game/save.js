@@ -1,3 +1,5 @@
+import { SPECIES_DEFS, UPGRADE_DEFS } from "./config";
+
 const STORAGE_KEY = "bone-dunes-save-v1";
 export const MAX_SPECIES_CREATURES = 6;
 
@@ -16,6 +18,23 @@ export const DEFAULT_ALIGNMENT = {
   social: 0.33,
   adaptive: 0.33,
 };
+
+export const DEFAULT_TRAIT_BLUEPRINTS = UPGRADE_DEFS.reduce((blueprints, upgrade) => {
+  blueprints[upgrade.key] = upgrade.unlock?.type === "starter";
+  return blueprints;
+}, {});
+
+export const DEFAULT_SPECIES_RELATIONS = Object.values(SPECIES_DEFS).reduce((relations, species) => {
+  relations[species.id] = {
+    status: "wary",
+    rapport: 0,
+    friendship: 0,
+    dominance: 0,
+    allyUnlocked: false,
+    alphaUnlocked: false,
+  };
+  return relations;
+}, {});
 
 export function createRandomCreatureProfile() {
   return {
@@ -97,6 +116,50 @@ function sanitizeAlignment(rawAlignment) {
     social: Number((normalized.social / total).toFixed(4)),
     adaptive: Number((normalized.adaptive / total).toFixed(4)),
   };
+}
+
+function sanitizeSpeciesRelations(rawRelations) {
+  return Object.keys(DEFAULT_SPECIES_RELATIONS).reduce((relations, speciesId) => {
+    const fallback = DEFAULT_SPECIES_RELATIONS[speciesId];
+    const relation = rawRelations?.[speciesId];
+    const status = typeof relation?.status === "string" && ["friendly", "wary", "hostile"].includes(relation.status)
+      ? relation.status
+      : fallback.status;
+
+    relations[speciesId] = {
+      status,
+      rapport: Number.isFinite(relation?.rapport) ? clamp(relation.rapport, -120, 120) : fallback.rapport,
+      friendship: Number.isFinite(relation?.friendship) ? Math.max(0, Math.round(relation.friendship)) : fallback.friendship,
+      dominance: Number.isFinite(relation?.dominance) ? Math.max(0, Math.round(relation.dominance)) : fallback.dominance,
+      allyUnlocked: Boolean(relation?.allyUnlocked),
+      alphaUnlocked: Boolean(relation?.alphaUnlocked),
+    };
+    return relations;
+  }, {});
+}
+
+function sanitizeTraitBlueprints(rawBlueprints, speciesCreatures, evolutionDraft) {
+  const blueprints = { ...DEFAULT_TRAIT_BLUEPRINTS };
+
+  Object.keys(DEFAULT_TRAIT_BLUEPRINTS).forEach((traitKey) => {
+    if (rawBlueprints?.[traitKey] != null) {
+      blueprints[traitKey] = Boolean(rawBlueprints[traitKey]);
+    }
+  });
+
+  [...speciesCreatures, evolutionDraft].forEach((creatureLike) => {
+    if (!creatureLike?.traits) {
+      return;
+    }
+
+    Object.keys(DEFAULT_TRAITS).forEach((traitKey) => {
+      if ((creatureLike.traits?.[traitKey] ?? 0) > 0) {
+        blueprints[traitKey] = true;
+      }
+    });
+  });
+
+  return blueprints;
 }
 
 function createCreatureId() {
@@ -182,6 +245,8 @@ function buildDefaultSave() {
     upgrades: { ...starterCreature.traits },
     creatureProfile: sanitizeProfile(starterCreature.profile),
     alignment: { ...DEFAULT_ALIGNMENT },
+    traitBlueprints: sanitizeTraitBlueprints(DEFAULT_TRAIT_BLUEPRINTS, [starterCreature], createEvolutionDraft(starterCreature)),
+    speciesRelations: sanitizeSpeciesRelations(DEFAULT_SPECIES_RELATIONS),
   };
 }
 
@@ -200,6 +265,8 @@ function cloneDefaultSave() {
     upgrades: { ...speciesCreatures[0].traits },
     creatureProfile: sanitizeProfile(speciesCreatures[0].profile),
     alignment: { ...DEFAULT_SAVE.alignment },
+    traitBlueprints: { ...DEFAULT_SAVE.traitBlueprints },
+    speciesRelations: sanitizeSpeciesRelations(DEFAULT_SAVE.speciesRelations),
   };
 }
 
@@ -225,6 +292,8 @@ export function loadSave() {
         : speciesCreatures[0].id;
     const activeCreature = speciesCreatures.find((creature) => creature.id === activeCreatureId) ?? speciesCreatures[0];
     const evolutionDraft = sanitizeEvolutionDraft(parsed?.evolutionDraft, speciesCreatures, activeCreatureId);
+    const traitBlueprints = sanitizeTraitBlueprints(parsed?.traitBlueprints, speciesCreatures, evolutionDraft);
+    const speciesRelations = sanitizeSpeciesRelations(parsed?.speciesRelations);
 
     return {
       dna: Number.isFinite(parsed?.dna) ? Math.max(0, Math.round(parsed.dna)) : DEFAULT_SAVE.dna,
@@ -236,6 +305,8 @@ export function loadSave() {
       upgrades: sanitizeTraits(parsed?.upgrades ?? activeCreature.traits),
       creatureProfile: sanitizeProfile(parsed?.creatureProfile ?? activeCreature.profile),
       alignment: sanitizeAlignment(parsed?.alignment),
+      traitBlueprints,
+      speciesRelations,
     };
   } catch {
     return cloneDefaultSave();
@@ -255,6 +326,8 @@ export function saveProgress(payload) {
       : speciesCreatures[0].id;
   const activeCreature = speciesCreatures.find((creature) => creature.id === activeCreatureId) ?? speciesCreatures[0];
   const evolutionDraft = sanitizeEvolutionDraft(payload.evolutionDraft, speciesCreatures, activeCreatureId);
+  const traitBlueprints = sanitizeTraitBlueprints(payload.traitBlueprints, speciesCreatures, evolutionDraft);
+  const speciesRelations = sanitizeSpeciesRelations(payload.speciesRelations);
   const snapshot = {
     dna: Math.max(0, Math.round(payload.dna ?? 0)),
     speciesXp: Math.max(0, Math.round(payload.speciesXp ?? 0)),
@@ -265,6 +338,8 @@ export function saveProgress(payload) {
     upgrades: sanitizeTraits(payload.upgrades ?? activeCreature.traits),
     creatureProfile: sanitizeProfile(payload.creatureProfile ?? activeCreature.profile),
     alignment: sanitizeAlignment(payload.alignment),
+    traitBlueprints,
+    speciesRelations,
   };
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));

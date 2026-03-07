@@ -339,3 +339,49 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no new gameplay systems were added to justify the UI pass
   - no pause/settings tree was introduced; the work stayed focused on simplifying the current live HUD and the existing nest flow
+
+## 2026-03-07 Social Gameplay + World Blueprint Pass
+
+- Current request: push Bone Dunes further toward a Spore-like creature stage by adding lightweight social gameplay, species relationships, and trait blueprints unlocked through encounters instead of handing every upgrade to the player from the start.
+- Implemented:
+  - extended `src/game/config.js` so each species now has:
+    - a simple social pattern (`Sing`, `Pose`, `Charm`)
+    - ally and dominance blueprint rewards
+  - extended `src/game/save.js` so progress now persists:
+    - per-species relationship state (`friendly`, `wary`, `hostile`, friendship, dominance)
+    - unlocked evolution blueprints
+    - migration logic that preserves already-owned traits as unlocked on older saves
+  - added lightweight social encounters to `src/game/SporeSliceGame.js`:
+    - `Q`, `E`, `R` now send social signals to nearby species
+    - correct patterns befriend species and flip their line to `friendly`
+    - wrong signals fail cleanly instead of mutating state silently
+    - attacks and nest damage now turn species `hostile`
+  - added world-earned evolution progression:
+    - starter line begins with only the basic `jaw` and `legs` blueprints unlocked
+    - befriending species unlocks ally traits like `Glow Veins`
+    - defeating species unlocks dominance traits like `Whip Tail`
+  - updated enemy behavior so friendly species stop opening on the player and instead shadow/watch more calmly, while hostile species keep extra alert pressure
+  - updated `src/game/GameApp.jsx` and `src/index.css` so the HUD/editor explain the new loop without clutter:
+    - contextual social hint chip in the gameplay strip
+    - blueprint summary in the HUD and evolution screen
+    - species relationship pills in the nest editor
+    - locked evolution cards now show the exact unlock condition instead of failing silently
+  - fixed a HUD regression discovered in browser validation:
+    - the `Creature Evolution` button in the live HUD was sitting inside a non-interactive layer, so the canvas intercepted clicks
+    - `src/index.css` now gives the context strip pointer events so the nest button is actually usable
+- Validation:
+  - `npm run build` passes after the social/world-blueprint pass
+  - shared skill-client smoke capture:
+    - `output/web-game/social-pass-smoke`
+  - visual inspection:
+    - confirmed the gameplay HUD now shows `Blueprints X/7` and only adds one small social-status chip when a species is nearby
+    - confirmed locked evolution cards clearly read `Locked` plus `Befriend ...` / `Defeat ...`
+  - deterministic browser checks on the local autostart build:
+    - fresh save starts with only `Crushing Jaw` and `Stilt Legs` unlocked
+    - `Sing -> Charm` near a burrowing herbivore flips that species to `friendly`, increments friendship to `1`, and unlocks `Glow Veins`
+    - instantly defeating a dune scavenger flips that species to `hostile`, increments dominance to `1`, and unlocks `Whip Tail`
+    - clicking the live HUD `Creature Evolution` button now successfully opens the nest editor (`editorOpen: true`)
+    - Playwright browser console showed no actual errors beyond the React DevTools info banner
+- Scope protected:
+  - no full conversation tree, tribe phase, multiple biomes, or freeform Spore editor
+  - no giant faction/quest system; the pass stayed focused on one simple social layer that materially changes evolution progression
