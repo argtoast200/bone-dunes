@@ -246,3 +246,50 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no physics engine, combo tree, or combat-system rewrite
   - no save/progression changes beyond using existing stats to derive movement mass
+
+## 2026-03-07 Evolution-Core Species Nest Pass
+
+- Current request: make evolution the core gameplay loop instead of a live-mutate upgrade list, reduce the oversized top-left panel, remove the old quiet-window framing, and add nest-based egg laying, body switching, and maturation.
+- Implementation approach:
+  - kept the existing renderer/combat/ecosystem architecture and threaded a species-roster model through the save/game state instead of rewriting the player pipeline
+  - left the current active-player runtime intact by deriving the live body from the currently selected species creature plus its maturation state
+- Implemented:
+  - expanded `src/game/save.js` from a single creature snapshot into a species save with:
+    - `speciesCreatures`
+    - `activeCreatureId`
+    - `evolutionDraft`
+    - `speciesXp`
+    - migration from older single-creature saves
+  - changed `src/game/SporeSliceGame.js` so:
+    - Creature Evolution spends DNA on a persistent egg draft instead of mutating the live body immediately
+    - Species Nest lays a new egg from that draft, creates a newborn creature, and switches control into it
+    - the active creature can be switched back and forth at the nest
+    - newborn bodies grow over time alive and from kills
+    - simple/smaller bodies mature faster via a lower growth target
+    - species XP can fast-evolve a hatchling to adulthood
+    - active combat/movement stats and visuals now scale from the selected body plus its maturity progress
+    - `render_game_to_text()` now exposes species roster, active creature growth, species XP, and evolution-draft state for browser validation
+  - rebuilt `src/game/GameApp.jsx` around a smaller top-left species card and a two-tab nest overlay:
+    - `Creature Evolution` for DNA spending
+    - `Species Nest` for laying eggs, fast evolving, and switching bodies
+  - removed the old quiet-window emphasis and shifted the HUD copy toward DNA -> egg -> hatchling growth
+  - updated `src/index.css` to support the tighter top-left card, editor tabs, and species roster cards
+- Validation:
+  - `npm run build` passes after the species-nest pass
+  - shared web-game client captures:
+    - `output/web-game/evolution-core-pass-1`
+    - `output/web-game/evolution-species-pass-2`
+  - visual inspection:
+    - confirmed the top-left card is materially smaller and now centers active body/growth instead of the old quiet-window callout
+    - captured and inspected the Species Nest overlay with roster cards and the new tabbed flow
+  - deterministic browser checks on the local autostart build:
+    - clicking `Hook Horns` in `Creature Evolution` reduced DNA from `320` to `302` and marked the egg draft as ready
+    - laying the egg increased roster size from `1` to `2`, switched control into the newborn, and set the new body to `0` growth / `70` points remaining
+    - `5s` of time alive raised the newborn to about `0.037` growth and reduced remaining growth to `68`
+    - a forced kill raised newborn growth to about `0.237`, dropped remaining growth to `54`, raised species XP to `97`, and awarded DNA back up to `320`
+    - fast-evolving the active hatchling succeeded, set growth to `1`, and consumed species XP down to `53`
+    - switching back to the generation-1 parent body succeeded while keeping roster size at `2`
+    - no browser console errors beyond the React DevTools info banner
+- Scope protected:
+  - no full freeform Spore editor, breeding tree, or species-culling management screen
+  - no major combat/ecosystem rewrite; the pass stayed focused on making evolution drive the existing loop

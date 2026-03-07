@@ -1,4 +1,5 @@
 const STORAGE_KEY = "bone-dunes-save-v1";
+export const MAX_SPECIES_CREATURES = 6;
 
 export const DEFAULT_TRAITS = {
   jaw: 0,
@@ -26,14 +27,6 @@ export function createRandomCreatureProfile() {
     patternScale: Number((0.92 + Math.random() * 0.24).toFixed(3)),
   };
 }
-
-export const DEFAULT_SAVE = {
-  dna: 0,
-  bestRun: 0,
-  upgrades: { ...DEFAULT_TRAITS },
-  creatureProfile: createRandomCreatureProfile(),
-  alignment: { ...DEFAULT_ALIGNMENT },
-};
 
 const LEGACY_UPGRADE_KEYS = {
   speed: "legs",
@@ -106,12 +99,106 @@ function sanitizeAlignment(rawAlignment) {
   };
 }
 
+function createCreatureId() {
+  return `creature-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function createSpeciesCreature(payload = {}) {
+  return {
+    id: typeof payload.id === "string" && payload.id ? payload.id : createCreatureId(),
+    generation: Number.isFinite(payload.generation) ? Math.max(1, Math.round(payload.generation)) : 1,
+    traits: sanitizeTraits(payload.traits),
+    profile: sanitizeProfile(payload.profile),
+    growth: Number.isFinite(payload.growth) ? clamp(payload.growth, 0, 1) : 1,
+    killCount: Number.isFinite(payload.killCount) ? Math.max(0, Math.round(payload.killCount)) : 0,
+    activeTime: Number.isFinite(payload.activeTime) ? Math.max(0, payload.activeTime) : 0,
+    createdAt: Number.isFinite(payload.createdAt) ? Math.max(0, payload.createdAt) : Date.now(),
+  };
+}
+
+export function createEvolutionDraft(creature) {
+  const sourceCreature = creature ? createSpeciesCreature(creature) : createSpeciesCreature({
+    traits: DEFAULT_TRAITS,
+    profile: createRandomCreatureProfile(),
+    growth: 1,
+  });
+  return {
+    baseCreatureId: sourceCreature.id,
+    traits: sanitizeTraits(sourceCreature.traits),
+    profile: sanitizeProfile(sourceCreature.profile),
+  };
+}
+
+function sanitizeSpeciesCreatures(rawCreatures, legacyUpgrades = DEFAULT_TRAITS, legacyProfile = createRandomCreatureProfile()) {
+  const rawList = Array.isArray(rawCreatures) ? rawCreatures : [];
+  const nextCreatures = rawList
+    .filter(Boolean)
+    .slice(0, MAX_SPECIES_CREATURES)
+    .map((creature, index) => createSpeciesCreature({
+      ...creature,
+      generation: Number.isFinite(creature?.generation) ? creature.generation : index + 1,
+    }));
+
+  if (nextCreatures.length > 0) {
+    return nextCreatures;
+  }
+
+  return [createSpeciesCreature({
+    traits: legacyUpgrades,
+    profile: legacyProfile,
+    growth: 1,
+    generation: 1,
+  })];
+}
+
+function sanitizeEvolutionDraft(rawDraft, speciesCreatures, activeCreatureId) {
+  const fallbackCreature = speciesCreatures.find((creature) => creature.id === activeCreatureId) ?? speciesCreatures[0];
+  return {
+    baseCreatureId:
+      typeof rawDraft?.baseCreatureId === "string"
+      && speciesCreatures.some((creature) => creature.id === rawDraft.baseCreatureId)
+        ? rawDraft.baseCreatureId
+        : fallbackCreature.id,
+    traits: sanitizeTraits(rawDraft?.traits ?? fallbackCreature.traits),
+    profile: sanitizeProfile(rawDraft?.profile ?? fallbackCreature.profile),
+  };
+}
+
+function buildDefaultSave() {
+  const starterCreature = createSpeciesCreature({
+    traits: DEFAULT_TRAITS,
+    profile: createRandomCreatureProfile(),
+    growth: 1,
+    generation: 1,
+  });
+
+  return {
+    dna: 0,
+    speciesXp: 0,
+    bestRun: 0,
+    speciesCreatures: [starterCreature],
+    activeCreatureId: starterCreature.id,
+    evolutionDraft: createEvolutionDraft(starterCreature),
+    upgrades: { ...starterCreature.traits },
+    creatureProfile: sanitizeProfile(starterCreature.profile),
+    alignment: { ...DEFAULT_ALIGNMENT },
+  };
+}
+
+export const DEFAULT_SAVE = buildDefaultSave();
+
 function cloneDefaultSave() {
+  const speciesCreatures = DEFAULT_SAVE.speciesCreatures.map((creature) => createSpeciesCreature(creature));
+  const activeCreatureId = speciesCreatures[0].id;
   return {
     dna: DEFAULT_SAVE.dna,
+    speciesXp: DEFAULT_SAVE.speciesXp,
     bestRun: DEFAULT_SAVE.bestRun,
-    upgrades: { ...DEFAULT_SAVE.upgrades },
-    creatureProfile: sanitizeProfile(DEFAULT_SAVE.creatureProfile),
+    speciesCreatures,
+    activeCreatureId,
+    evolutionDraft: sanitizeEvolutionDraft(DEFAULT_SAVE.evolutionDraft, speciesCreatures, activeCreatureId),
+    upgrades: { ...speciesCreatures[0].traits },
+    creatureProfile: sanitizeProfile(speciesCreatures[0].profile),
     alignment: { ...DEFAULT_SAVE.alignment },
   };
 }
@@ -128,11 +215,26 @@ export function loadSave() {
     }
 
     const parsed = JSON.parse(raw);
+    const legacyUpgrades = sanitizeTraits(parsed?.upgrades);
+    const legacyProfile = sanitizeProfile(parsed?.creatureProfile);
+    const speciesCreatures = sanitizeSpeciesCreatures(parsed?.speciesCreatures, legacyUpgrades, legacyProfile);
+    const activeCreatureId =
+      typeof parsed?.activeCreatureId === "string"
+      && speciesCreatures.some((creature) => creature.id === parsed.activeCreatureId)
+        ? parsed.activeCreatureId
+        : speciesCreatures[0].id;
+    const activeCreature = speciesCreatures.find((creature) => creature.id === activeCreatureId) ?? speciesCreatures[0];
+    const evolutionDraft = sanitizeEvolutionDraft(parsed?.evolutionDraft, speciesCreatures, activeCreatureId);
+
     return {
       dna: Number.isFinite(parsed?.dna) ? Math.max(0, Math.round(parsed.dna)) : DEFAULT_SAVE.dna,
+      speciesXp: Number.isFinite(parsed?.speciesXp) ? Math.max(0, Math.round(parsed.speciesXp)) : 0,
       bestRun: Number.isFinite(parsed?.bestRun) ? Math.max(0, Math.round(parsed.bestRun)) : DEFAULT_SAVE.bestRun,
-      upgrades: sanitizeTraits(parsed?.upgrades),
-      creatureProfile: sanitizeProfile(parsed?.creatureProfile),
+      speciesCreatures,
+      activeCreatureId,
+      evolutionDraft,
+      upgrades: sanitizeTraits(parsed?.upgrades ?? activeCreature.traits),
+      creatureProfile: sanitizeProfile(parsed?.creatureProfile ?? activeCreature.profile),
       alignment: sanitizeAlignment(parsed?.alignment),
     };
   } catch {
@@ -145,11 +247,23 @@ export function saveProgress(payload) {
     return;
   }
 
+  const speciesCreatures = sanitizeSpeciesCreatures(payload.speciesCreatures, payload.upgrades, payload.creatureProfile);
+  const activeCreatureId =
+    typeof payload.activeCreatureId === "string"
+    && speciesCreatures.some((creature) => creature.id === payload.activeCreatureId)
+      ? payload.activeCreatureId
+      : speciesCreatures[0].id;
+  const activeCreature = speciesCreatures.find((creature) => creature.id === activeCreatureId) ?? speciesCreatures[0];
+  const evolutionDraft = sanitizeEvolutionDraft(payload.evolutionDraft, speciesCreatures, activeCreatureId);
   const snapshot = {
     dna: Math.max(0, Math.round(payload.dna ?? 0)),
+    speciesXp: Math.max(0, Math.round(payload.speciesXp ?? 0)),
     bestRun: Math.max(0, Math.round(payload.bestRun ?? DEFAULT_SAVE.bestRun)),
-    upgrades: sanitizeTraits(payload.upgrades),
-    creatureProfile: sanitizeProfile(payload.creatureProfile),
+    speciesCreatures,
+    activeCreatureId,
+    evolutionDraft,
+    upgrades: sanitizeTraits(payload.upgrades ?? activeCreature.traits),
+    creatureProfile: sanitizeProfile(payload.creatureProfile ?? activeCreature.profile),
     alignment: sanitizeAlignment(payload.alignment),
   };
 

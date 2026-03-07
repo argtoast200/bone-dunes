@@ -153,6 +153,70 @@ button {
   border-radius: 24px;
 }
 
+.compact-brand-card {
+  max-width: 330px;
+  padding: 16px 18px;
+}
+
+.brand-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.compact-brand-card h1 {
+  font-size: clamp(1.8rem, 3vw, 2.8rem);
+}
+
+.brand-active {
+  display: grid;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 244, 227, 0.05);
+}
+
+.brand-active span,
+.brand-active small {
+  color: rgba(248, 234, 209, 0.7);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.brand-active span {
+  font-size: 0.68rem;
+}
+
+.brand-active strong {
+  font-size: 1.05rem;
+  color: #fff4df;
+}
+
+.brand-active small {
+  font-size: 0.66rem;
+}
+
+.compact-meter-block {
+  margin-top: 12px;
+}
+
+.meter-copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: rgba(248, 234, 209, 0.76);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.compact-status-row {
+  margin-top: 12px;
+}
+
 .status-banner {
   display: flex;
   justify-content: space-between;
@@ -468,6 +532,26 @@ button {
   margin-top: 14px;
 }
 
+.editor-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.editor-tab {
+  border: 1px solid rgba(255, 214, 160, 0.14);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: rgba(255, 244, 227, 0.05);
+  color: rgba(248, 234, 209, 0.82);
+}
+
+.editor-tab.active {
+  color: #11231d;
+  background: linear-gradient(135deg, #7affda, #ffd59a);
+}
+
 .upgrade-btn,
 .utility-btn,
 .start-btn,
@@ -655,6 +739,7 @@ button {
 
 .utility-card {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
 }
@@ -757,6 +842,50 @@ button {
 
 .editor-upgrade-list {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.species-roster-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.species-roster-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 244, 227, 0.05);
+  border: 1px solid rgba(255, 214, 160, 0.1);
+}
+
+.species-roster-card.active {
+  border-color: rgba(121, 255, 217, 0.22);
+  box-shadow: inset 0 0 22px rgba(121, 255, 217, 0.06);
+}
+
+.species-roster-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.species-roster-copy strong {
+  color: #fff4df;
+  font-size: 1.02rem;
+}
+
+.species-roster-copy span {
+  color: rgba(248, 234, 209, 0.76);
+}
+
+.species-roster-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  justify-content: center;
 }
 
 .editor-upgrade-btn {
@@ -950,6 +1079,15 @@ button {
   .editor-upgrade-list,
   .trait-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .species-roster-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .species-roster-actions {
+    align-items: stretch;
   }
 
   .hunt-grid,

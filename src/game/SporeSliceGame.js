@@ -15,8 +15,11 @@ import {
   DEFAULT_ALIGNMENT,
   DEFAULT_SAVE,
   clearSave,
+  createEvolutionDraft,
   createRandomCreatureProfile,
+  createSpeciesCreature,
   loadSave,
+  MAX_SPECIES_CREATURES,
   saveProgress,
 } from "./save";
 import { buildWorld, getTerrainHeight } from "./world";
@@ -65,6 +68,11 @@ const PLAYER_TERRAIN_SAMPLE_RADIUS = 1.15;
 const PLAYER_DUST_INTERVAL = 0.08;
 const GAMEPAD_MOVE_DEADZONE = 0.18;
 const GAMEPAD_LOOK_DEADZONE = 0.22;
+const NEWBORN_SIZE_FLOOR = 0.6;
+const NEWBORN_TRAIT_FLOOR = 0.38;
+const SPECIES_XP_PASSIVE_RATE = 0.52;
+const NEWBORN_GROWTH_PASSIVE_RATE = 1.14;
+const FAST_EVOLVE_COST_MULTIPLIER = 0.82;
 const BLOCKED_BROWSER_KEYS = new Set([
   "KeyW",
   "KeyA",
@@ -620,6 +628,104 @@ function buildCreatureIdentity(profile, traits) {
   return `${sizeWord} ${traitWord} ${patternWord}`;
 }
 
+function getTraitTotal(traits) {
+  return Object.values(traits).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+function getCreatureMaturity(creature) {
+  return clamp(creature?.growth ?? 1, 0, 1);
+}
+
+function getCreatureStage(maturity) {
+  if (maturity >= 0.999) {
+    return "adult";
+  }
+  if (maturity >= 0.55) {
+    return "juvenile";
+  }
+  return "newborn";
+}
+
+function describeCreatureStage(maturity) {
+  const stage = getCreatureStage(maturity);
+  if (stage === "adult") {
+    return "Adult";
+  }
+  if (stage === "juvenile") {
+    return "Growing";
+  }
+  return "Newborn";
+}
+
+function computeCreatureMaturityTarget(creatureOrTraits, profileArg = null) {
+  const traits = creatureOrTraits?.traits ?? creatureOrTraits ?? DEFAULT_SAVE.upgrades;
+  const profile = creatureOrTraits?.profile ?? profileArg ?? DEFAULT_SAVE.creatureProfile;
+  const traitComplexity = getTraitTotal(traits);
+  const sizeWeight = Math.max(0, (profile.size ?? 1) - 0.9);
+  const patternWeight = Math.max(0, (profile.patternScale ?? 1) - 0.92);
+  return Math.round(26 + traitComplexity * 13 + sizeWeight * 46 + patternWeight * 12);
+}
+
+function computeRemainingMaturityPoints(creature) {
+  const target = computeCreatureMaturityTarget(creature);
+  return Math.max(0, target * (1 - getCreatureMaturity(creature)));
+}
+
+function getFastEvolveCost(creature) {
+  return Math.max(1, Math.ceil(computeRemainingMaturityPoints(creature) * FAST_EVOLVE_COST_MULTIPLIER));
+}
+
+function getCreatureRuntimeState(creature) {
+  const maturity = getCreatureMaturity(creature);
+  const sizeScale = THREE.MathUtils.lerp(NEWBORN_SIZE_FLOOR, 1, maturity);
+  const traitScale = THREE.MathUtils.lerp(NEWBORN_TRAIT_FLOOR, 1, maturity);
+  const runtimeTraits = Object.entries(creature.traits).reduce((traits, [key, value]) => {
+    traits[key] = value > 0 ? Number((value * traitScale).toFixed(3)) : 0;
+    return traits;
+  }, {});
+
+  return {
+    maturity,
+    sizeScale,
+    traitScale,
+    stage: getCreatureStage(maturity),
+    maturityTarget: computeCreatureMaturityTarget(creature),
+    runtimeTraits,
+    runtimeProfile: {
+      ...creature.profile,
+      size: Number(((creature.profile.size ?? 1) * sizeScale).toFixed(3)),
+      patternScale: Number(THREE.MathUtils.lerp(0.88, creature.profile.patternScale ?? 1, 0.58 + maturity * 0.42).toFixed(3)),
+    },
+  };
+}
+
+function compareTraitSets(left, right) {
+  return Object.keys(DEFAULT_SAVE.upgrades).every((key) => (left?.[key] ?? 0) === (right?.[key] ?? 0));
+}
+
+function compareProfiles(left, right) {
+  return ["bodyHue", "accentHue", "markingsHue", "size", "patternType", "patternScale"].every((key) => {
+    const a = left?.[key];
+    const b = right?.[key];
+    if (Number.isFinite(a) || Number.isFinite(b)) {
+      return Math.abs((a ?? 0) - (b ?? 0)) < 0.0001;
+    }
+    return a === b;
+  });
+}
+
+function mutateEggProfile(profile, traits) {
+  const traitWeight = getTraitTotal(traits);
+  return {
+    bodyHue: (profile.bodyHue + (Math.random() - 0.5) * 0.025 + 1) % 1,
+    accentHue: (profile.accentHue + (Math.random() - 0.5) * 0.035 + 1) % 1,
+    markingsHue: (profile.markingsHue + (Math.random() - 0.5) * 0.045 + 1) % 1,
+    size: clamp(profile.size + (Math.random() - 0.5) * (0.03 + traitWeight * 0.0025), 0.82, 1.24),
+    patternType: Math.random() < 0.18 ? Math.floor(Math.random() * PATTERN_LABELS.length) : profile.patternType,
+    patternScale: clamp(profile.patternScale + (Math.random() - 0.5) * 0.08, 0.8, 1.35),
+  };
+}
+
 function applyCreatureAppearance(creature, traits, profile, palette) {
   const resolvedPalette = palette ?? createPaletteFromProfile(profile);
   const sizeScale = profile.size ?? 1;
@@ -869,6 +975,28 @@ export class SporeSliceGame {
     this.lastFrameTime = 0;
     this.elapsed = 0;
     this.saveData = loadSave();
+    this.saveData.speciesCreatures = (this.saveData.speciesCreatures ?? []).map((creature) => createSpeciesCreature(creature));
+    if (!this.saveData.speciesCreatures.length) {
+      const starterCreature = createSpeciesCreature({
+        traits: DEFAULT_SAVE.upgrades,
+        profile: DEFAULT_SAVE.creatureProfile,
+        growth: 1,
+      });
+      this.saveData.speciesCreatures = [starterCreature];
+      this.saveData.activeCreatureId = starterCreature.id;
+      this.saveData.evolutionDraft = createEvolutionDraft(starterCreature);
+    }
+    if (!this.saveData.speciesCreatures.some((creature) => creature.id === this.saveData.activeCreatureId)) {
+      this.saveData.activeCreatureId = this.saveData.speciesCreatures[0].id;
+    }
+    if (!this.saveData.evolutionDraft) {
+      const draftBase = this.saveData.speciesCreatures.find((creature) => creature.id === this.saveData.activeCreatureId) ?? this.saveData.speciesCreatures[0];
+      this.saveData.evolutionDraft = createEvolutionDraft(draftBase);
+    }
+    const initialActiveCreature =
+      this.saveData.speciesCreatures.find((creature) => creature.id === this.saveData.activeCreatureId)
+      ?? this.saveData.speciesCreatures[0];
+    this.activeCreatureRuntime = getCreatureRuntimeState(initialActiveCreature);
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 220);
@@ -887,15 +1015,21 @@ export class SporeSliceGame {
     this.state = {
       mode: "menu",
       zone: "nest",
-      message: "Wake at the nest, then head into the dunes for food.",
-      objective: "Collect food, hunt threats, and evolve at the nest.",
+      message: "Wake at the nest, gather DNA, then return to lay the next egg.",
+      objective: "Evolve at the nest, hatch a stronger body, and grow it in the dunes.",
       dna: this.saveData.dna,
+      speciesXp: this.saveData.speciesXp ?? 0,
       bestRun: this.saveData.bestRun ?? 0,
-      upgrades: getTraitLevels(this.saveData),
-      creatureProfile: { ...this.saveData.creatureProfile },
+      upgrades: { ...this.activeCreatureRuntime.runtimeTraits },
+      creatureProfile: { ...this.activeCreatureRuntime.runtimeProfile },
       alignment: normalizeAlignment(this.saveData.alignment ?? DEFAULT_ALIGNMENT),
-      hasSave: this.saveData.dna > 0 || Object.values(this.saveData.upgrades).some(Boolean),
+      hasSave:
+        this.saveData.dna > 0
+        || (this.saveData.speciesXp ?? 0) > 0
+        || this.saveData.speciesCreatures.length > 1
+        || Object.values(initialActiveCreature.traits).some(Boolean),
       editorOpen: false,
+      editorTab: "evolution",
       lastEvolution: null,
       ecosystemNotice: "The dunes are still settling.",
       startedAt: 0,
@@ -972,7 +1106,7 @@ export class SporeSliceGame {
       timeAlive: 0,
       score: 0,
       bestRun: this.saveData.bestRun ?? 0,
-      summary: "Fresh hatchling. No hunts logged yet.",
+      summary: "Fresh line. Gather DNA, lay a new egg, then grow it in the dunes.",
     };
     this.player = this.buildPlayer();
     this.foods = [];
@@ -1112,6 +1246,264 @@ export class SporeSliceGame {
       isSprinting: false,
       groundMarker,
     };
+  }
+
+  getSpeciesCreatureById(creatureId) {
+    return this.saveData.speciesCreatures.find((creature) => creature.id === creatureId) ?? null;
+  }
+
+  getActiveCreature() {
+    return this.getSpeciesCreatureById(this.saveData.activeCreatureId) ?? this.saveData.speciesCreatures[0] ?? null;
+  }
+
+  getDraftBaseCreature() {
+    return this.getSpeciesCreatureById(this.saveData.evolutionDraft?.baseCreatureId) ?? this.getActiveCreature();
+  }
+
+  resetEvolutionDraft(baseCreature = this.getActiveCreature()) {
+    if (!baseCreature) {
+      return;
+    }
+    this.saveData.evolutionDraft = createEvolutionDraft(baseCreature);
+  }
+
+  isDraftModified() {
+    const draft = this.saveData.evolutionDraft;
+    const baseCreature = this.getDraftBaseCreature();
+    if (!draft || !baseCreature) {
+      return false;
+    }
+    return !compareTraitSets(draft.traits, baseCreature.traits) || !compareProfiles(draft.profile, baseCreature.profile);
+  }
+
+  setEditorTab(tab) {
+    if (!["evolution", "species"].includes(tab) || this.state.editorTab === tab) {
+      return false;
+    }
+    this.state.editorTab = tab;
+    this.state.message = tab === "evolution"
+      ? "Spend DNA on the next body plan, then lay the egg at the nest."
+      : "Switch bodies, watch hatchlings grow, or fast evolve them with species XP.";
+    this.emitState();
+    return true;
+  }
+
+  applyActiveCreatureState({ preserveHealthRatio = true } = {}) {
+    const activeCreature = this.getActiveCreature();
+    if (!activeCreature) {
+      return;
+    }
+
+    this.activeCreatureRuntime = getCreatureRuntimeState(activeCreature);
+    this.state.upgrades = { ...this.activeCreatureRuntime.runtimeTraits };
+    this.state.creatureProfile = { ...this.activeCreatureRuntime.runtimeProfile };
+
+    if (!this.player) {
+      this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
+      return;
+    }
+
+    const previousHealthRatio = preserveHealthRatio && this.player.maxHealth > 0 ? this.player.health / this.player.maxHealth : 1;
+    this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
+    this.player.maxHealth = this.playerStats.health;
+    this.player.health = preserveHealthRatio
+      ? clamp(this.playerStats.health * previousHealthRatio, 0, this.player.maxHealth)
+      : this.player.maxHealth;
+    this.applyUpgradeVisuals();
+    this.player.group.scale.setScalar(this.player.baseScale);
+  }
+
+  grantSpeciesXp(points, { matureActive = false, source = "time" } = {}) {
+    if (!Number.isFinite(points) || points <= 0) {
+      return;
+    }
+
+    this.state.speciesXp += points;
+    this.state.hasSave = true;
+    const activeCreature = this.getActiveCreature();
+    if (!activeCreature) {
+      return;
+    }
+
+    if (source === "time") {
+      activeCreature.activeTime += points / Math.max(0.0001, NEWBORN_GROWTH_PASSIVE_RATE);
+    }
+
+    if (matureActive && activeCreature.growth < 1) {
+      const previousGrowth = activeCreature.growth;
+      const targetPoints = computeCreatureMaturityTarget(activeCreature);
+      activeCreature.growth = clamp(activeCreature.growth + points / Math.max(1, targetPoints), 0, 1);
+      if (activeCreature.growth !== previousGrowth) {
+        this.applyActiveCreatureState({ preserveHealthRatio: true });
+        if (activeCreature.growth >= 1 && previousGrowth < 1) {
+          this.player.evolutionTimer = 1.15;
+          this.player.evolutionTrait = "growth";
+          this.evolutionFx.timer = 1.15;
+          this.evolutionFx.trait = "growth";
+          this.spawnBurst(this.player.group.position, {
+            color: 0x9affdf,
+            ttl: 0.62,
+            size: 1.4,
+            shards: 10,
+          });
+          this.state.lastEvolution = {
+            key: "growth",
+            label: "Maturation Complete",
+            summary: `${buildCreatureIdentity(activeCreature.profile, activeCreature.traits)} reaches adult mass.`,
+          };
+          this.state.message = `${buildCreatureIdentity(activeCreature.profile, activeCreature.traits)} matures into an adult body.`;
+        }
+      }
+    }
+  }
+
+  switchSpeciesCreature(creatureId) {
+    if (this.state.mode !== "playing" || this.state.zone !== "nest" || this.state.respawnTimer > 0) {
+      return false;
+    }
+
+    const nextCreature = this.getSpeciesCreatureById(creatureId);
+    if (!nextCreature || nextCreature.id === this.saveData.activeCreatureId) {
+      return false;
+    }
+
+    this.saveData.activeCreatureId = nextCreature.id;
+    this.applyActiveCreatureState({ preserveHealthRatio: false });
+    this.player.sprintCharge = 1;
+    this.player.attackCooldown = 0;
+    this.player.attackPhase = "idle";
+    this.player.attackResult = "ready";
+    this.player.evolutionTimer = 0.9;
+    this.player.evolutionTrait = "swap";
+    this.evolutionFx.timer = 0.9;
+    this.evolutionFx.trait = "swap";
+    this.cameraFovKick = Math.max(this.cameraFovKick, 1.8);
+    this.state.message = `${buildCreatureIdentity(nextCreature.profile, nextCreature.traits)} steps out of the nest.`;
+    if (!this.isDraftModified()) {
+      this.resetEvolutionDraft(nextCreature);
+    }
+    this.persistProgress();
+    this.emitState();
+    return true;
+  }
+
+  layEgg() {
+    if (this.state.mode !== "playing" || this.state.zone !== "nest" || this.state.respawnTimer > 0) {
+      return false;
+    }
+
+    if (!this.isDraftModified() || this.saveData.speciesCreatures.length >= MAX_SPECIES_CREATURES) {
+      return false;
+    }
+
+    const draft = this.saveData.evolutionDraft;
+    const highestGeneration = this.saveData.speciesCreatures.reduce((maxValue, creature) => Math.max(maxValue, creature.generation), 0);
+    const hatchling = createSpeciesCreature({
+      traits: draft.traits,
+      profile: mutateEggProfile(draft.profile, draft.traits),
+      growth: 0,
+      generation: highestGeneration + 1,
+      activeTime: 0,
+      killCount: 0,
+    });
+
+    this.saveData.speciesCreatures.push(hatchling);
+    this.saveData.activeCreatureId = hatchling.id;
+    this.applyActiveCreatureState({ preserveHealthRatio: false });
+    this.player.health = this.player.maxHealth;
+    this.player.sprintCharge = 1;
+    this.player.attackCooldown = 0;
+    this.player.evolutionTimer = 1.45;
+    this.player.evolutionTrait = "egg";
+    this.evolutionFx.timer = 1.45;
+    this.evolutionFx.trait = "egg";
+    this.spawnBurst(this.player.group.position, {
+      color: 0x9fffe7,
+      ttl: 0.8,
+      size: 1.7,
+      shards: 12,
+    });
+    this.spawnAttackArc(this.player.group.position.clone().setY(this.player.group.position.y + 0.55), this.player.yaw, {
+      color: 0xb6ffe9,
+      ttl: 0.3,
+      size: 1.45,
+    });
+    this.cameraShake = Math.max(this.cameraShake, 0.18);
+    this.state.editorTab = "species";
+    this.state.lastEvolution = {
+      key: "egg",
+      label: "New Egg Laid",
+      summary: `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches as a newborn and must grow into its full mass.`,
+    };
+    this.state.message = `${buildCreatureIdentity(hatchling.profile, hatchling.traits)} hatches. Hunt in this body to speed maturation.`;
+    this.resetEvolutionDraft(hatchling);
+    this.persistProgress();
+    this.emitState();
+    return true;
+  }
+
+  fastEvolveCreature(creatureId) {
+    if (this.state.mode !== "playing" || this.state.zone !== "nest" || this.state.respawnTimer > 0) {
+      return false;
+    }
+
+    const creature = this.getSpeciesCreatureById(creatureId);
+    if (!creature || creature.growth >= 1) {
+      return false;
+    }
+
+    const cost = getFastEvolveCost(creature);
+    if (this.state.speciesXp < cost) {
+      return false;
+    }
+
+    this.state.speciesXp -= cost;
+    creature.growth = 1;
+    creature.activeTime += 4;
+    if (creature.id === this.saveData.activeCreatureId) {
+      this.applyActiveCreatureState({ preserveHealthRatio: true });
+      this.player.evolutionTimer = 1.25;
+      this.player.evolutionTrait = "growth";
+      this.evolutionFx.timer = 1.25;
+      this.evolutionFx.trait = "growth";
+    }
+    this.spawnBurst(this.player.group.position, {
+      color: 0x8ffff1,
+      ttl: 0.64,
+      size: 1.5,
+      shards: 11,
+    });
+    this.state.lastEvolution = {
+      key: "fast-evolve",
+      label: "Fast Evolve",
+      summary: `${buildCreatureIdentity(creature.profile, creature.traits)} finishes growing for ${cost} XP.`,
+    };
+    this.state.message = `${buildCreatureIdentity(creature.profile, creature.traits)} surges into adulthood.`;
+    this.persistProgress();
+    this.emitState();
+    return true;
+  }
+
+  updateSpeciesProgress(dt) {
+    if (this.state.mode !== "playing" || this.state.editorOpen || this.state.respawnTimer > 0) {
+      return;
+    }
+
+    const activeCreature = this.getActiveCreature();
+    if (!activeCreature) {
+      return;
+    }
+
+    const speciesXpBefore = Math.floor(this.state.speciesXp);
+    const growthBefore = activeCreature.growth;
+    this.grantSpeciesXp(dt * SPECIES_XP_PASSIVE_RATE, {
+      matureActive: activeCreature.growth < 1,
+      source: "time",
+    });
+
+    if (Math.floor(this.state.speciesXp) !== speciesXpBefore || Math.floor(growthBefore * 20) !== Math.floor(activeCreature.growth * 20)) {
+      this.persistProgress();
+    }
   }
 
   buildMoveTargetMarker() {
@@ -1740,9 +2132,9 @@ export class SporeSliceGame {
       this.state.mode = "playing";
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
-        ? "The dunes remember you. Hunt, gather DNA, then return home to evolve."
-        : "Food glows across the dunes. Bring DNA home before the predators close in.";
-      this.runStats.summary = "Fresh hunt. Build a score, then bank upgrades at the nest.";
+        ? "The nest remembers your line. Gather DNA, draft the next body, then hatch it at home."
+        : "Food glows across the dunes. Bring DNA back to the species nest and lay the next egg.";
+      this.runStats.summary = "Fresh hunt. DNA builds the next body, and hatchlings mature through time and kills.";
       this.state.startedAt = this.elapsed;
       this.state.editorOpen = false;
       this.renderer.domElement.focus();
@@ -2084,14 +2476,17 @@ export class SporeSliceGame {
       this.handleBlur();
       this.clearMoveTarget();
       this.input.attackQueued = false;
+      if (!this.saveData.evolutionDraft) {
+        this.resetEvolutionDraft();
+      }
       this.state.editorOpen = true;
-      this.state.message = "Nest editor open. Spend DNA to reshape the dune-runner.";
+      this.state.message = "Species nest open. Spend DNA on an egg plan, lay it, or switch to another body.";
     } else {
       if (!this.state.editorOpen) {
         return false;
       }
       this.state.editorOpen = false;
-      this.state.message = "Evolution locked in. Leave the nest and test the new body.";
+      this.state.message = "Nest sealed. Take the active body back into the dunes.";
       this.renderer.domElement.focus();
     }
     this.emitState();
@@ -2118,6 +2513,8 @@ export class SporeSliceGame {
     window.render_game_to_text = () => {
       const playerPosition = this.player.group.position;
       const currentTerritory = this.currentTerritory ?? this.getCurrentTerritoryForPosition(playerPosition);
+      const activeCreature = this.getActiveCreature();
+      const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
       const nearbyFoods = sortByDistance(playerPosition, this.foods.filter((food) => food.active), (food, distance) => ({
         id: food.id,
         x: Number(food.group.position.x.toFixed(1)),
@@ -2161,9 +2558,11 @@ export class SporeSliceGame {
         mode: this.state.mode,
         zone: this.state.zone,
         editorOpen: this.state.editorOpen,
+        editorTab: this.state.editorTab,
         message: this.state.message,
         objective: this.state.objective,
         ecosystemNotice: this.state.ecosystemNotice,
+        speciesXp: Math.round(this.state.speciesXp),
         gamepad: {
           connected: this.gamepad.connected,
           label: this.gamepad.label,
@@ -2212,7 +2611,9 @@ export class SporeSliceGame {
           terrainSlow: Number((1 - this.player.terrain.speedFactor).toFixed(2)),
           mass: Number(this.playerStats.mass.toFixed(2)),
           attackImpact: Number(this.player.attackImpact.toFixed(2)),
-          identity: buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
+          identity: activeCreature ? buildCreatureIdentity(activeCreature.profile, activeCreature.traits) : buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades),
+          stage: activeCreature ? describeCreatureStage(activeCreature.growth) : "Adult",
+          growth: activeCreature ? Number(activeCreature.growth.toFixed(3)) : 1,
         },
         moveTarget: this.moveTarget.active
           ? {
@@ -2225,6 +2626,30 @@ export class SporeSliceGame {
         summary: this.runStats.summary,
         upgrades: this.state.upgrades,
         creatureProfile: this.state.creatureProfile,
+        activeCreature: activeCreature
+          ? {
+              id: activeCreature.id,
+              identity: buildCreatureIdentity(activeCreature.profile, activeCreature.traits),
+              generation: activeCreature.generation,
+              growth: Number(activeCreature.growth.toFixed(3)),
+              growthTarget: computeCreatureMaturityTarget(activeCreature),
+              remainingGrowth: Math.ceil(computeRemainingMaturityPoints(activeCreature)),
+            }
+          : null,
+        speciesRoster: this.saveData.speciesCreatures.map((creature) => ({
+          id: creature.id,
+          identity: buildCreatureIdentity(creature.profile, creature.traits),
+          generation: creature.generation,
+          growth: Number(creature.growth.toFixed(3)),
+          fastEvolveCost: creature.growth >= 1 ? 0 : getFastEvolveCost(creature),
+          active: creature.id === this.saveData.activeCreatureId,
+        })),
+        evolutionDraft: {
+          baseCreatureId: draft.baseCreatureId,
+          identity: buildCreatureIdentity(draft.profile, draft.traits),
+          modified: this.isDraftModified(),
+          traits: draft.traits,
+        },
         alignment: this.state.alignment,
         food: nearbyFoods,
         carcasses: nearbyCarcasses,
@@ -2253,7 +2678,11 @@ export class SporeSliceGame {
   persistProgress() {
     saveProgress({
       dna: this.state.dna,
+      speciesXp: this.state.speciesXp,
       bestRun: this.state.bestRun,
+      speciesCreatures: this.saveData.speciesCreatures,
+      activeCreatureId: this.saveData.activeCreatureId,
+      evolutionDraft: this.saveData.evolutionDraft,
       upgrades: this.state.upgrades,
       creatureProfile: this.state.creatureProfile,
       alignment: this.state.alignment,
@@ -2324,9 +2753,10 @@ export class SporeSliceGame {
     this.state.message = reward > amount
       ? `${message} Danger surge: +${reward - amount} bonus DNA. Feral surge x${surgeLevel}.`
       : `${message} Feral surge x${surgeLevel}.`;
+    const activeCreature = this.getActiveCreature();
     this.runStats.summary = this.surge.timer > 0.2
-      ? `Run score ${this.runStats.score}. ${this.runStats.sessionDna} DNA gathered this hunt. Feral surge x${this.surge.level} is live.`
-      : `Run score ${this.runStats.score}. ${this.runStats.sessionDna} DNA gathered this hunt.`;
+      ? `${this.runStats.sessionDna} DNA gathered. ${Math.round(this.state.speciesXp)} species XP banked. Feral surge x${this.surge.level} is live.`
+      : `${this.runStats.sessionDna} DNA gathered. ${activeCreature && activeCreature.growth < 1 ? `${buildCreatureIdentity(activeCreature.profile, activeCreature.traits)} is ${Math.round(activeCreature.growth * 100)}% grown.` : `${Math.round(this.state.speciesXp)} species XP banked for fast evolve.`}`;
     if (options.position) {
       this.spawnBurst(options.position, {
         color: reward > amount ? 0xff9b70 : 0x73ffe5,
@@ -2346,19 +2776,21 @@ export class SporeSliceGame {
       return;
     }
 
-    const currentLevel = this.state.upgrades[key] ?? 0;
+    if (!this.saveData.evolutionDraft) {
+      this.resetEvolutionDraft();
+    }
+
+    const draft = this.saveData.evolutionDraft;
+    const currentLevel = draft.traits[key] ?? 0;
     const cost = spec.costs[currentLevel];
     if (cost == null || this.state.dna < cost) {
       return;
     }
 
     this.state.dna -= cost;
-    this.state.upgrades[key] = currentLevel + 1;
+    draft.traits[key] = currentLevel + 1;
     this.state.alignment = shiftAlignment(this.state.alignment, "social", 0.026);
-    this.updatePlayerStats();
-    this.applyUpgradeVisuals();
-    this.player.sprintCharge = 1;
-    this.player.health = Math.min(this.player.maxHealth, this.player.health + this.player.maxHealth * 0.25);
+    this.state.hasSave = true;
     this.player.evolutionTimer = 1.45;
     this.player.evolutionTrait = key;
     this.evolutionFx.timer = 1.45;
@@ -2366,9 +2798,9 @@ export class SporeSliceGame {
     this.state.lastEvolution = {
       key,
       label: spec.label,
-      summary: describeTraitLevel(key, this.state.upgrades[key]),
+      summary: describeTraitLevel(key, draft.traits[key]),
     };
-    this.state.message = `${spec.label} evolved. ${describeTraitLevel(key, this.state.upgrades[key])}.`;
+    this.state.message = `${spec.label} added to the egg plan. ${describeTraitLevel(key, draft.traits[key])}.`;
     this.spawnBurst(this.player.group.position, {
       color: 0x93ffe3,
       ttl: 0.72,
@@ -2388,21 +2820,31 @@ export class SporeSliceGame {
 
   resetProgress() {
     clearSave();
+    const starterCreature = createSpeciesCreature({
+      traits: DEFAULT_SAVE.upgrades,
+      profile: createRandomCreatureProfile(),
+      growth: 1,
+      generation: 1,
+    });
     this.saveData = {
       ...DEFAULT_SAVE,
-      upgrades: { ...DEFAULT_SAVE.upgrades },
-      creatureProfile: createRandomCreatureProfile(),
+      speciesXp: 0,
+      speciesCreatures: [starterCreature],
+      activeCreatureId: starterCreature.id,
+      evolutionDraft: createEvolutionDraft(starterCreature),
+      upgrades: { ...starterCreature.traits },
+      creatureProfile: { ...starterCreature.profile },
       alignment: { ...DEFAULT_ALIGNMENT },
     };
     this.state.dna = 0;
+    this.state.speciesXp = 0;
     this.state.bestRun = 0;
-    this.state.upgrades = getTraitLevels(this.saveData);
-    this.state.creatureProfile = { ...this.saveData.creatureProfile };
     this.state.alignment = { ...this.saveData.alignment };
     this.state.hasSave = false;
     this.state.editorOpen = false;
+    this.state.editorTab = "evolution";
     this.state.lastEvolution = null;
-    this.state.message = "The nest is quiet again. A fresh organism emerges.";
+    this.state.message = "A fresh clutch stirs in the nest. Shape the first adult, then hatch the next body.";
     this.runStats = {
       sessionDna: 0,
       scavengersDefeated: 0,
@@ -2411,11 +2853,10 @@ export class SporeSliceGame {
       timeAlive: 0,
       score: 0,
       bestRun: 0,
-      summary: "Fresh hatchling. No hunts logged yet.",
+      summary: "Fresh species line. Gather DNA, draft an egg, then hatch it at the nest.",
     };
     this.clearFeralSurge();
-    this.updatePlayerStats();
-    this.applyUpgradeVisuals();
+    this.applyActiveCreatureState({ preserveHealthRatio: false });
     this.resetEcosystemState();
     this.resetPlayerToNest(true);
     this.foods.forEach((food) => {
@@ -2654,7 +3095,7 @@ export class SporeSliceGame {
       this.state.alignment = shiftAlignment(this.state.alignment, "adaptive", 0.02);
       this.updateRunScore();
       this.clearFeralSurge();
-      this.runStats.summary = `Run score ${this.runStats.score}. ${this.runStats.predatorsDefeated} predators, ${this.runStats.scavengersDefeated} scavengers, and ${this.runStats.herbivoresDefeated} herbivores brought down.`;
+      this.runStats.summary = `${this.runStats.sessionDna} DNA secured before collapse. Species XP remains banked at ${Math.round(this.state.speciesXp)}.`;
       this.persistProgress();
       this.state.message = dnaLoss > 0
         ? `You lose ${dnaLoss} DNA and reform at the nest.`
@@ -2722,6 +3163,17 @@ export class SporeSliceGame {
         attacker.targetCarcassId = carcass.id;
       }
       if (sourceKind === "player") {
+        const activeCreature = this.getActiveCreature();
+        if (activeCreature) {
+          activeCreature.killCount += 1;
+        }
+        this.grantSpeciesXp(
+          enemy.type === "predator" ? 14 : enemy.type === "scavenger" ? 9 : 7,
+          {
+            matureActive: true,
+            source: "kill",
+          },
+        );
         this.awardDNA(
           enemy.spec.reward,
           `You defeat a ${enemy.species.name.toLowerCase()} and harvest ${enemy.spec.reward} DNA.`,
@@ -3607,6 +4059,7 @@ export class SporeSliceGame {
     }
 
     this.runStats.timeAlive += dt;
+    this.updateSpeciesProgress(dt);
     this.player.previousVelocity.copy(this.player.velocity);
     const surgePower = this.surge.timer > 0 ? this.surge.level : 0;
     const surgeCharge = clamp(this.surge.timer / FERAL_SURGE_MAX_TIMER, 0, 1);
@@ -3909,14 +4362,14 @@ export class SporeSliceGame {
 
     if (this.state.zone === "nest" && this.state.editorOpen) {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 18);
-      this.state.objective = "Editor open: spend DNA, compare stat shifts, then close the nest screen to hunt.";
+      this.state.objective = "Creature Evolution spends DNA on the next egg. Species Nest swaps bodies and fast evolves hatchlings.";
     } else if (this.state.zone === "nest") {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
-      this.state.objective = "Safe nest: heal, refill your burst, and spend DNA on evolutions.";
+      this.state.objective = "Species nest: heal, bank DNA into a new egg, hatch it, then grow the newborn in the dunes.";
     } else if (this.state.zone === "danger") {
       this.state.objective = "Territory zone: richer DNA, tighter stamina, and predators that commit.";
     } else {
-      this.state.objective = "Bone dunes: chain blooms, avoid bad fights, and push toward a bigger run score.";
+      this.state.objective = "Bone dunes: gather DNA, hunt what you can finish, then bring the next body plan home.";
     }
   }
 
@@ -4149,9 +4602,9 @@ export class SporeSliceGame {
       if (this.state.zone === "danger") {
         this.state.message = "The dunes turn hotter here. Richer DNA, faster deaths.";
       } else if (this.state.zone === "nest") {
-        this.state.message = this.runStats.score > 0
-          ? `Safe again. Current run score ${this.runStats.score}. Spend DNA or push farther.`
-          : "The nest hums softly. Heal up and evolve.";
+        this.state.message = this.runStats.sessionDna > 0
+          ? `Back at the species nest. Spend DNA on the next egg or switch into a stronger adult.`
+          : "Back at the species nest. Heal up, shape the next egg, or hatch a waiting newborn.";
       }
       this.lastZone = this.state.zone;
     } else {
@@ -4169,13 +4622,15 @@ export class SporeSliceGame {
     if (this.state.editorOpen) {
       this.state.message = this.state.lastEvolution
         ? `${this.state.lastEvolution.label} set. ${this.state.lastEvolution.summary}.`
-        : "Nest editor open. Shape the creature, then close the editor to hunt.";
+        : this.state.editorTab === "evolution"
+          ? "Creature Evolution open. Spend DNA on a new body plan, then lay the egg."
+          : "Species Nest open. Swap between bodies or fast evolve a hatchling with species XP.";
     } else if (this.state.mode === "playing" && this.surge.timer > 0.2 && this.elapsed % 6 < dt) {
       this.state.message = `Feral surge x${this.surge.level}. Keep feeding it with blooms or kills before it burns out.`;
     } else if (this.state.mode === "playing" && this.state.zone === "danger" && this.player.attackCooldown <= 0.05 && this.elapsed % 8 < dt) {
       this.state.message = "The air thickens with heat. Better rewards, worse odds.";
     } else if (this.state.mode === "playing" && this.state.zone === "nest" && this.elapsed % 10 < dt) {
-      this.state.message = "The nest hums softly. Evolve while the predators keep their distance.";
+      this.state.message = "The species nest is calm. Hatchlings grow faster when they survive real hunts.";
     }
 
     if (this.elapsed % 0.2 < dt) {
@@ -4200,8 +4655,13 @@ export class SporeSliceGame {
   }
 
   emitState() {
+    const activeCreature = this.getActiveCreature();
+    const activeRuntime = activeCreature ? getCreatureRuntimeState(activeCreature) : this.activeCreatureRuntime;
+    const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
+    const draftBaseCreature = this.getDraftBaseCreature();
+    const draftModified = this.isDraftModified();
     const upgradeEntries = UPGRADE_DEFS.map((upgrade) => {
-      const level = this.state.upgrades[upgrade.key] ?? 0;
+      const level = draft.traits[upgrade.key] ?? 0;
       const cost = upgrade.costs[level] ?? null;
       return {
         ...upgrade,
@@ -4213,7 +4673,9 @@ export class SporeSliceGame {
         canBuy: this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
       };
     });
-    const identity = buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades);
+    const identity = activeCreature
+      ? buildCreatureIdentity(activeCreature.profile, activeCreature.traits)
+      : buildCreatureIdentity(this.state.creatureProfile, this.state.upgrades);
     const statEntries = [
       { label: "Bite", value: Math.round(this.playerStats.biteDamage), detail: "damage" },
       { label: "Stride", value: this.playerStats.speed.toFixed(1), detail: "move speed" },
@@ -4250,6 +4712,35 @@ export class SporeSliceGame {
         distance: Number(distance.toFixed(1)),
       }),
     ).slice(0, 3);
+    const speciesRoster = this.saveData.speciesCreatures.map((creature) => {
+      const runtime = getCreatureRuntimeState(creature);
+      const remainingPoints = computeRemainingMaturityPoints(creature);
+      const fastEvolveCost = creature.growth >= 1 ? 0 : getFastEvolveCost(creature);
+      return {
+        id: creature.id,
+        identity: buildCreatureIdentity(creature.profile, creature.traits),
+        generation: creature.generation,
+        stage: describeCreatureStage(runtime.maturity),
+        maturity: Number(runtime.maturity.toFixed(3)),
+        maturityPct: Math.round(runtime.maturity * 100),
+        maturityTarget: runtime.maturityTarget,
+        remainingGrowth: Math.ceil(remainingPoints),
+        fastEvolveCost,
+        canSwitch: this.state.zone === "nest" && this.state.mode === "playing" && creature.id !== this.saveData.activeCreatureId,
+        canFastEvolve:
+          this.state.zone === "nest"
+          && this.state.mode === "playing"
+          && creature.growth < 1
+          && this.state.speciesXp >= fastEvolveCost,
+        active: creature.id === this.saveData.activeCreatureId,
+        killCount: creature.killCount,
+        activeTime: Number(creature.activeTime.toFixed(1)),
+        traitTotal: Math.round(getTraitTotal(creature.traits)),
+      };
+    });
+    const activeStage = describeCreatureStage(activeRuntime.maturity);
+    const rosterFull = this.saveData.speciesCreatures.length >= MAX_SPECIES_CREATURES;
+    const activeMaturityRemaining = computeRemainingMaturityPoints(activeCreature);
 
     this.onStateChange?.({
       mode: this.state.mode,
@@ -4257,6 +4748,7 @@ export class SporeSliceGame {
       message: this.state.message,
       objective: this.state.objective,
       dna: this.state.dna,
+      speciesXp: Math.round(this.state.speciesXp),
       bestRun: this.state.bestRun,
       runScore: this.runStats.score,
       sessionDna: this.runStats.sessionDna,
@@ -4299,14 +4791,15 @@ export class SporeSliceGame {
       gamepadLabel: this.gamepad.label,
       nearbySpecies,
       nearbyNests,
-      upgrades: this.state.upgrades,
+      upgrades: draft.traits,
       upgradeEntries,
       editorOpen: this.state.editorOpen,
+      editorTab: this.state.editorTab,
       editorPulse: this.player.evolutionTimer > 0 ? this.player.evolutionTimer / 1.45 : 0,
       creatureIdentity: identity,
       creatureProfile: {
-        ...this.state.creatureProfile,
-        patternLabel: PATTERN_LABELS[this.state.creatureProfile.patternType] ?? PATTERN_LABELS[0],
+        ...(activeCreature?.profile ?? this.state.creatureProfile),
+        patternLabel: PATTERN_LABELS[(activeCreature?.profile ?? this.state.creatureProfile).patternType] ?? PATTERN_LABELS[0],
       },
       alignment: this.state.alignment,
       traitStats: statEntries,
@@ -4314,13 +4807,49 @@ export class SporeSliceGame {
       hasSave: this.state.hasSave,
       canUpgrade: this.state.zone === "nest" && this.state.mode !== "menu",
       canOpenEditor: this.state.zone === "nest" && this.state.mode === "playing" && this.state.respawnTimer <= 0,
+      canLayEgg:
+        this.state.zone === "nest"
+        && this.state.mode === "playing"
+        && this.state.respawnTimer <= 0
+        && draftModified
+        && !rosterFull,
+      rosterFull,
+      speciesRoster,
+      activeCreature: activeCreature
+        ? {
+            id: activeCreature.id,
+            identity,
+            generation: activeCreature.generation,
+            stage: activeStage,
+            maturity: Number(activeRuntime.maturity.toFixed(3)),
+            maturityPct: Math.round(activeRuntime.maturity * 100),
+            maturityTarget: activeRuntime.maturityTarget,
+            remainingGrowth: Math.ceil(activeMaturityRemaining),
+            fastEvolveCost: activeCreature.growth >= 1 ? 0 : getFastEvolveCost(activeCreature),
+            canFastEvolve: activeCreature.growth < 1 && this.state.speciesXp >= getFastEvolveCost(activeCreature),
+            sizeScale: Number(activeRuntime.sizeScale.toFixed(3)),
+            killCount: activeCreature.killCount,
+            activeTime: Number(activeCreature.activeTime.toFixed(1)),
+          }
+        : null,
+      evolutionDraft: {
+        identity: buildCreatureIdentity(draft.profile, draft.traits),
+        baseCreatureId: draft.baseCreatureId,
+        baseIdentity: draftBaseCreature ? buildCreatureIdentity(draftBaseCreature.profile, draftBaseCreature.traits) : identity,
+        modified: draftModified,
+        profile: {
+          ...draft.profile,
+          patternLabel: PATTERN_LABELS[draft.profile.patternType] ?? PATTERN_LABELS[0],
+        },
+        traitTotal: Math.round(getTraitTotal(draft.traits)),
+      },
       controlsHint: this.gamepad.connected
         ? "Xbox pad: left stick move, right stick aim, A/RT bite, B/LB sprint, Start editor"
         : this.state.mode === "menu"
-          ? "Left click move, WASD/Arrows steer, Space/right click bite, F fullscreen"
+          ? "Left click move, WASD/Arrows steer, Space/right click bite, then return to the nest to evolve"
         : this.state.editorOpen
-          ? "Nest editor open. Spend DNA, then press Esc or Close Editor."
-          : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite. Territories react to you.",
+          ? "Species nest open. Creature Evolution spends DNA; Species Nest swaps bodies and fast evolves hatchlings."
+          : "Left click move, WASD/Arrows steer, Shift sprint, Space/right click bite. Bring DNA home to hatch new bodies.",
     });
   }
 
