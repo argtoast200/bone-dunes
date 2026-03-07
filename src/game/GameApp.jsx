@@ -328,7 +328,7 @@ export function GameApp() {
   } else if (!uiState.biomeUnlocked && uiState.zone !== "nest") {
     contextPrompt = `${uiState.biomeName} is still a hard frontier. Return stronger before trying to claim it for the species.`;
   } else if (uiState.biomeKey === "originWaters" && activeCreature && activeCreature.maturityPct < 100) {
-    contextPrompt = "Origin waters accelerate newborn growth. Feed here before pushing into the harder frontiers.";
+    contextPrompt = "Origin waters accelerate newborn growth. Feed with the tide skimmers here before pushing into harder frontiers.";
   } else if (uiState.canOpenEditor && uiState.evolutionDraft?.modified) {
     contextPrompt = "Egg draft ready. Open Creature Evolution, then lay the egg from Species.";
   } else if (uiState.canOpenEditor) {
@@ -522,7 +522,7 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div className="menu-panel">
                     <h3>Core Loop</h3>
-                    <p>Feed in the origin waters. Push into shallows, marsh, dunes, and basin frontiers. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
+                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, dunes, and basin frontiers. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>
@@ -636,7 +636,7 @@ export function GameApp() {
                           {" "}
                           discovered
                         </strong>
-                        <small>New parts come from befriending or defeating species in the dunes.</small>
+                        <small>New parts come from species encounters or mastering the shallows and marsh frontiers.</small>
                       </div>
                       <div className="species-relation-row">
                         {uiState.speciesRelations.map((relation) => (

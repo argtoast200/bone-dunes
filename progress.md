@@ -447,3 +447,47 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no multi-map campaign, no flying/underground stage split, no broad species rewrite
   - no hard biome lock walls yet; this pass makes biome expansion legible and consequential before adding heavier gate systems
+
+## 2026-03-07 Aquatic Species + Frontier Blueprint Pass
+
+- Current request: follow through on the next obvious Spore-like additions after the water-origin biome pass by adding one true aquatic species and letting shoreline / marsh progression materially change evolution unlocks.
+- Implementation focus:
+  - add only one readable early-water species instead of a broader ecosystem expansion
+  - keep the existing ally / alpha blueprint loop intact, but supplement it with frontier-mastery unlock routes so biome pressure shapes creature identity
+- Implemented:
+  - extended `src/game/config.js` with a new aquatic species:
+    - `Tide Skimmer` now lives in the origin-pool / shallows corridor as a low-aggression herbivore pack
+    - added a reef-style nest, `Tidal Skim` migration event, and a lightweight `tideSkimmer` enemy variant so the water start no longer feels empty
+  - extended blueprint definitions so some parts now have multiple valid acquisition routes:
+    - `Whip Tail` can now come from befriending `Tide Skimmer`, defeating `Dune Scavenger`, or mastering `Sunlit Shallows (12)`
+    - `Sunspine Crest` can still come from befriending `Dune Scavenger`, but now also from mastering `Sunlit Shallows (20)`
+    - `Glow Veins` can still come from befriending `Burrowing Herbivore`, but now also from mastering `Glow Marsh (11)`
+  - updated `src/game/SporeSliceGame.js` so frontier unlocks are actually granted:
+    - added route-aware unlock text generation
+    - added frontier mastery blueprint checks that auto-unlock traits once biome thresholds are reached
+    - added a distinct `Blueprint Adapted` announcement path for frontier-earned parts
+    - added a reef nest marker so the aquatic species reads differently from scrap / burrow / bone-den species
+  - updated `src/game/GameApp.jsx` copy so the player is explicitly steered toward tide skimmers and frontier-earned blueprint routes rather than assuming all parts still come only from land species
+- Validation:
+  - `npm run build` passes
+  - required standalone `$WEB_GAME_CLIENT` run completed, but like the previous pass it returned no useful stdout; artifacts were still emitted
+  - saved validation artifacts:
+    - `output/web-game/aquatic-frontier-pass/client-shot-0.png`
+    - `output/web-game/aquatic-frontier-pass/client-state-0.json`
+    - `output/web-game/aquatic-frontier-pass/editor-shot.png`
+  - visual inspection:
+    - confirmed the water-origin HUD now naturally introduces `Tide Skimmer` as the nearest readable species in the opening minutes
+    - confirmed the evolution screen still stays clean while showing the new blueprint count and frontier framing
+  - deterministic browser checks:
+    - fresh autostart state now shows nearby `Tide Skimmer` enemies in `Origin Waters`, plus a `social.species` prompt for `Tide Skimmer`
+    - initial blueprint hints now read:
+      - `Whip Tail`: `Befriend Tide Skimmer or Defeat Dune Scavenger or Master Sunlit Shallows (12)`
+      - `Glow Veins`: `Befriend Burrowing Herbivore or Master Glow Marsh (11)`
+      - `Sunspine Crest`: `Befriend Dune Scavenger or Master Sunlit Shallows (20)`
+    - forcing `Sunlit Shallows` mastery to `12` unlocked `Whip Tail`
+    - forcing `Glow Marsh` mastery to `11` unlocked `Glow Veins`
+    - combat regression still lands after the ecosystem change: a teleport-and-bite check on `Dune Scavenger` reduced HP `44 -> 22` and left `attackResult: "hit"` with visible stagger
+    - Playwright browser console reported `0` errors
+- Scope protected:
+  - no multi-biome campaign jump, no new editor rewrite, no second aquatic species family
+  - the pass stayed focused on making the aquatic start alive and tying two frontier routes into evolution in a way the current architecture already supports

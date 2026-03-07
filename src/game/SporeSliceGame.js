@@ -627,20 +627,52 @@ function getBlueprintLabel(traitKey) {
   return UPGRADE_DEFS.find((upgrade) => upgrade.key === traitKey)?.label ?? traitKey;
 }
 
-function getBlueprintUnlockText(upgrade, species = null) {
-  if (!upgrade?.unlock || upgrade.unlock.type === "starter") {
+function getUpgradeUnlockRoutes(upgrade) {
+  if (Array.isArray(upgrade?.unlockRoutes) && upgrade.unlockRoutes.length) {
+    return upgrade.unlockRoutes;
+  }
+  if (upgrade?.unlock) {
+    return [upgrade.unlock];
+  }
+  return [];
+}
+
+function describeBlueprintUnlockRoute(route) {
+  if (!route || route.type === "starter") {
     return "Starter instinct";
   }
 
+  if (route.type === "frontier") {
+    const biome = BIOME_DEFS[route.biomeKey];
+    if (!biome) {
+      return "Master a frontier";
+    }
+    return `Master ${biome.label}${Number.isFinite(route.mastery) ? ` (${Math.round(route.mastery)})` : ""}`;
+  }
+
+  const species = route.speciesId ? SPECIES_DEFS[route.speciesId] : null;
   if (!species) {
     return "Discover in the dunes";
   }
 
-  if (upgrade.unlock.type === "ally") {
+  if (route.type === "ally") {
     return `Befriend ${species.name}`;
   }
 
   return `Defeat ${species.name}`;
+}
+
+function getBlueprintUnlockText(upgrade) {
+  const routes = getUpgradeUnlockRoutes(upgrade);
+  if (!routes.length || routes.some((route) => route.type === "starter")) {
+    return "Starter instinct";
+  }
+
+  const uniqueRoutes = routes
+    .map((route) => describeBlueprintUnlockRoute(route))
+    .filter((label, index, labels) => labels.indexOf(label) === index);
+
+  return uniqueRoutes.join(" or ");
 }
 
 function createPaletteFromProfile(profile) {
@@ -1008,6 +1040,31 @@ function createSpeciesNestMarker(species) {
       glowStone.castShadow = true;
       marker.add(glowStone);
     }
+  } else if (species.nest.type === "reef") {
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.4, 0.85, 7), coreMaterial);
+    plate.position.y = 0.4;
+    plate.castShadow = true;
+    plate.receiveShadow = true;
+    marker.add(plate);
+
+    for (let index = 0; index < 5; index += 1) {
+      const angle = (index / 5) * Math.PI * 2 + 0.3;
+      const fan = new THREE.Mesh(
+        new THREE.ConeGeometry(0.42, 1.8, 4),
+        accentMaterial,
+      );
+      fan.position.set(Math.cos(angle) * 1.9, 1 + Math.sin(index * 1.7) * 0.18, Math.sin(angle) * 1.9);
+      fan.scale.set(0.8, 1.1 + (index % 2) * 0.18, 0.24);
+      fan.rotation.set(0.28, angle, 0.12);
+      fan.castShadow = true;
+      marker.add(fan);
+    }
+
+    const pearl = new THREE.Mesh(new THREE.OctahedronGeometry(0.82, 0), accentMaterial);
+    pearl.position.set(0, 1.55, 0);
+    pearl.scale.set(0.9, 1.2, 0.9);
+    pearl.castShadow = true;
+    marker.add(pearl);
   } else {
     const base = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.4, 1.1, 8), coreMaterial);
     base.position.y = 0.55;
@@ -1129,6 +1186,7 @@ export class SporeSliceGame {
       };
       return relations;
     }, {});
+    this.checkFrontierBlueprintUnlocks();
     const initialActiveCreature =
       this.saveData.speciesCreatures.find((creature) => creature.id === this.saveData.activeCreatureId)
       ?? this.saveData.speciesCreatures[0];
@@ -1467,7 +1525,79 @@ export class SporeSliceGame {
     return nextUnlocks;
   }
 
-  announceBlueprintUnlock(traitKeys, species, mode = "ally") {
+  getSatisfiedFrontierRoute(upgrade) {
+    const frontierRoute = getUpgradeUnlockRoutes(upgrade).find((route) => route.type === "frontier");
+    if (!frontierRoute) {
+      return null;
+    }
+
+    const mastery = this.saveData.biomeProgress?.mastery?.[frontierRoute.biomeKey] ?? 0;
+    return mastery >= (frontierRoute.mastery ?? 0) ? frontierRoute : null;
+  }
+
+  checkFrontierBlueprintUnlocks({ announce = false } = {}) {
+    const pendingUnlocks = [];
+
+    UPGRADE_DEFS.forEach((upgrade) => {
+      if (this.isTraitBlueprintUnlocked(upgrade.key)) {
+        return;
+      }
+
+      const route = this.getSatisfiedFrontierRoute(upgrade);
+      if (!route) {
+        return;
+      }
+
+      pendingUnlocks.push({
+        traitKey: upgrade.key,
+        route,
+      });
+    });
+
+    if (!pendingUnlocks.length) {
+      return false;
+    }
+
+    const routeByTrait = new Map(pendingUnlocks.map((entry) => [entry.traitKey, entry.route]));
+    const unlocked = this.unlockTraitBlueprints(pendingUnlocks.map((entry) => entry.traitKey));
+    if (!unlocked.length) {
+      return false;
+    }
+
+    if (announce) {
+      const groupedByBiome = unlocked.reduce((groups, traitKey) => {
+        const route = routeByTrait.get(traitKey);
+        if (!route) {
+          return groups;
+        }
+        if (!groups[route.biomeKey]) {
+          groups[route.biomeKey] = [];
+        }
+        groups[route.biomeKey].push(traitKey);
+        return groups;
+      }, {});
+
+      Object.entries(groupedByBiome).forEach(([biomeKey, traitKeys]) => {
+        const biome = BIOME_DEFS[biomeKey];
+        if (!biome) {
+          return;
+        }
+        this.announceBlueprintUnlock(
+          traitKeys,
+          {
+            id: biome.key,
+            name: biome.label,
+            uiColor: biome.uiColor,
+          },
+          "frontier",
+        );
+      });
+    }
+
+    return true;
+  }
+
+  announceBlueprintUnlock(traitKeys, source, mode = "ally") {
     if (!traitKeys.length) {
       return;
     }
@@ -1479,27 +1609,36 @@ export class SporeSliceGame {
     this.evolutionFx.timer = Math.max(this.evolutionFx.timer, 1.15);
     this.evolutionFx.trait = traitKeys[0];
     this.state.lastEvolution = {
-      key: `blueprint-${species?.id ?? traitKeys[0]}`,
-      label: mode === "ally" ? "Blueprint Befriended" : "Blueprint Claimed",
+      key: `blueprint-${source?.id ?? traitKeys[0]}`,
+      label:
+        mode === "ally"
+          ? "Blueprint Befriended"
+          : mode === "frontier"
+            ? "Blueprint Adapted"
+            : "Blueprint Claimed",
       summary,
     };
     this.state.message = mode === "ally"
-      ? `${species.name} trust your line. ${summary}`
-      : `${species.name} yield new anatomy. ${summary}`;
+      ? `${source.name} trust your line. ${summary}`
+      : mode === "frontier"
+        ? `${source.name} reshape the egg line. ${summary}`
+        : `${source.name} yield new anatomy. ${summary}`;
     this.setEcosystemNotice(
       mode === "ally"
-        ? `${species.name} now greet your species instead of striking first.`
-        : `${species.name} now remember your line as a threat.`,
+        ? `${source.name} now greet your species instead of striking first.`
+        : mode === "frontier"
+          ? `${source.name} now leave a permanent mark on your species anatomy.`
+          : `${source.name} now remember your line as a threat.`,
       4.2,
     );
     this.spawnBurst(this.player.group.position, {
-      color: species?.uiColor ?? 0x9fffe6,
+      color: source?.uiColor ?? 0x9fffe6,
       ttl: 0.8,
       size: 1.5,
       shards: 11,
     });
     this.spawnAttackArc(this.player.group.position.clone().setY(this.player.group.position.y + 0.52), this.player.yaw, {
-      color: species?.uiColor ?? 0x9fffe6,
+      color: source?.uiColor ?? 0x9fffe6,
       ttl: 0.3,
       size: 1.2,
     });
@@ -2013,6 +2152,9 @@ export class SporeSliceGame {
         unlocked = this.unlockBiome(biomeKey, { announce: this.state.mode === "playing" }) || unlocked;
       }
     });
+    const frontierBlueprintUnlocked = this.checkFrontierBlueprintUnlocks({
+      announce: this.state.mode === "playing",
+    });
 
     const dominantAfter = this.saveData.biomeProgress.dominantBiome;
     if (dominantAfter !== dominantBefore && this.state.mode === "playing") {
@@ -2020,7 +2162,7 @@ export class SporeSliceGame {
       this.setEcosystemNotice(`${dominantBiome.label} is now shaping the species line.`, 3.8);
     }
 
-    if ((discovered || masteryChanged || unlocked) && this.state.mode === "playing") {
+    if ((discovered || masteryChanged || unlocked || frontierBlueprintUnlocked) && this.state.mode === "playing") {
       this.state.hasSave = true;
       this.persistProgress();
     }
@@ -3173,12 +3315,11 @@ export class SporeSliceGame {
       const draft = this.saveData.evolutionDraft ?? createEvolutionDraft(activeCreature);
       const socialOpportunity = this.getSocialOpportunity();
       const blueprintEntries = UPGRADE_DEFS.map((upgrade) => {
-        const sourceSpecies = upgrade.unlock?.speciesId ? SPECIES_DEFS[upgrade.unlock.speciesId] : null;
         return {
           key: upgrade.key,
           label: upgrade.label,
           unlocked: this.isTraitBlueprintUnlocked(upgrade.key),
-          unlockHint: getBlueprintUnlockText(upgrade, sourceSpecies),
+          unlockHint: getBlueprintUnlockText(upgrade),
         };
       });
       const closestThreat = this.enemies
@@ -3510,8 +3651,7 @@ export class SporeSliceGame {
     const currentLevel = draft.traits[key] ?? 0;
     const cost = spec.costs[currentLevel];
     if (!this.isTraitBlueprintUnlocked(key)) {
-      const sourceSpecies = spec.unlock?.speciesId ? SPECIES_DEFS[spec.unlock.speciesId] : null;
-      this.state.message = `${spec.label} is still locked. ${getBlueprintUnlockText(spec, sourceSpecies)} first.`;
+      this.state.message = `${spec.label} is still locked. ${getBlueprintUnlockText(spec)} first.`;
       this.emitState();
       return;
     }
@@ -5560,7 +5700,6 @@ export class SporeSliceGame {
       const cost = upgrade.costs[level] ?? null;
       const nextTraits = cost == null ? draft.traits : { ...draft.traits, [upgrade.key]: level + 1 };
       const nextMaturityTarget = cost == null ? draftMaturityTarget : computeCreatureMaturityTarget({ traits: nextTraits, profile: draft.profile });
-      const sourceSpecies = upgrade.unlock?.speciesId ? SPECIES_DEFS[upgrade.unlock.speciesId] : null;
       const blueprintUnlocked = this.isTraitBlueprintUnlocked(upgrade.key);
       return {
         ...upgrade,
@@ -5571,8 +5710,8 @@ export class SporeSliceGame {
         growthDelta: Math.max(0, nextMaturityTarget - draftMaturityTarget),
         maxed: cost == null,
         blueprintUnlocked,
-        unlockHint: getBlueprintUnlockText(upgrade, sourceSpecies),
-        sourceSpecies: sourceSpecies?.name ?? null,
+        unlockHint: getBlueprintUnlockText(upgrade),
+        sourceSpecies: upgrade.unlock?.speciesId ? SPECIES_DEFS[upgrade.unlock.speciesId]?.name ?? null : null,
         unlockType: upgrade.unlock?.type ?? "starter",
         canBuy: blueprintUnlocked && this.state.zone === "nest" && cost != null && this.state.dna >= cost && this.state.mode !== "menu",
       };

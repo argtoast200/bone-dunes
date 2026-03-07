@@ -127,6 +127,7 @@ export const UPGRADE_DEFS = [
     costs: [18, 32],
     description: "+4 bite damage and stronger enemy intimidation",
     unlock: { type: "alpha", speciesId: "boneStalker" },
+    unlockRoutes: [{ type: "alpha", speciesId: "boneStalker" }],
   },
   {
     key: "crest",
@@ -135,6 +136,10 @@ export const UPGRADE_DEFS = [
     costs: [14, 24],
     description: "Radiant dorsal frill that pushes scavengers off your line",
     unlock: { type: "ally", speciesId: "duneScavenger" },
+    unlockRoutes: [
+      { type: "ally", speciesId: "duneScavenger" },
+      { type: "frontier", biomeKey: "sunlitShallows", mastery: 20 },
+    ],
   },
   {
     key: "tail",
@@ -143,6 +148,11 @@ export const UPGRADE_DEFS = [
     costs: [16, 28],
     description: "+18% knockback and sharper strike follow-through",
     unlock: { type: "alpha", speciesId: "duneScavenger" },
+    unlockRoutes: [
+      { type: "ally", speciesId: "tideSkimmer" },
+      { type: "alpha", speciesId: "duneScavenger" },
+      { type: "frontier", biomeKey: "sunlitShallows", mastery: 12 },
+    ],
   },
   {
     key: "legs",
@@ -159,6 +169,7 @@ export const UPGRADE_DEFS = [
     costs: [18, 32, 46],
     description: "+16 max health and +9% defense per level",
     unlock: { type: "ally", speciesId: "boneStalker" },
+    unlockRoutes: [{ type: "ally", speciesId: "boneStalker" }],
   },
   {
     key: "glow",
@@ -167,6 +178,10 @@ export const UPGRADE_DEFS = [
     costs: [14, 26, 38],
     description: "-8% bite recovery and brighter bioluminescent markings",
     unlock: { type: "ally", speciesId: "burrowingHerbivore" },
+    unlockRoutes: [
+      { type: "ally", speciesId: "burrowingHerbivore" },
+      { type: "frontier", biomeKey: "glowMarsh", mastery: 11 },
+    ],
   },
 ];
 
@@ -213,6 +228,24 @@ export const PREDATOR_SPAWNS = [
 ];
 
 export const ENEMY_DEFS = {
+  tideSkimmer: {
+    label: "tide skimmer",
+    family: "herbivore",
+    color: 0x72a8a0,
+    accent: 0x92ffe1,
+    speed: 9.8,
+    health: 30,
+    damage: 5,
+    reward: 6,
+    aggroRadius: 7,
+    leashRadius: 16,
+    attackRange: 2,
+    scale: 0.84,
+    yOffset: 1.08,
+    traits: { jaw: 0, horns: 0, crest: 1, tail: 1, legs: 0, spikes: 0, glow: 0 },
+    patternBias: 2,
+    poise: 0.66,
+  },
   scavenger: {
     label: "scavenger",
     family: "scavenger",
@@ -306,6 +339,40 @@ export const ENEMY_DEFS = {
 };
 
 export const SPECIES_DEFS = {
+  tideSkimmer: {
+    id: "tideSkimmer",
+    name: "Tide Skimmer",
+    temperament: "Curious",
+    dietType: "grazer",
+    aggression: 0.12,
+    socialPattern: ["sing", "pose"],
+    socialPrompt: "Answer with a bright trill, then glide in formation.",
+    allyUnlocks: ["tail"],
+    alphaUnlocks: [],
+    packSize: [3, 4],
+    uiColor: 0x8bf7e1,
+    territory: {
+      label: "Sun Shelf",
+      x: -23,
+      z: 18,
+      radius: 14,
+      color: 0x86e8d6,
+      landmark: "reef",
+    },
+    nest: {
+      x: -25,
+      z: 17,
+      hp: 95,
+      type: "reef",
+    },
+    memberTypes: ["tideSkimmer"],
+    spawnGroups: [
+      { x: -30, z: 22, count: 2, leaderVariant: "tideSkimmer" },
+      { x: -20, z: 12, count: 2, leaderVariant: "tideSkimmer" },
+    ],
+    respawnDelay: 13,
+    maxPopulation: 4,
+  },
   duneScavenger: {
     id: "duneScavenger",
     name: "Dune Scavenger",
@@ -412,6 +479,14 @@ export const SPECIES_DEFS = {
 };
 
 export const MIGRATION_EVENT_DEFS = [
+  {
+    key: "tidalSkim",
+    label: "Tidal Skim",
+    speciesId: "tideSkimmer",
+    duration: 14,
+    cooldown: 24,
+    target: { x: -7, z: 18 },
+  },
   {
     key: "herdCrossing",
     label: "Herd Crossing",
