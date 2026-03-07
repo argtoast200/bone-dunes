@@ -1,6 +1,11 @@
 :root {
   font-family: "Geist Variable", "Avenir Next", "Trebuchet MS", sans-serif;
   color: #f6e4c8;
+  --panel-bg: linear-gradient(180deg, rgba(46, 27, 16, 0.88), rgba(24, 16, 12, 0.88));
+  --panel-border: rgba(255, 214, 160, 0.18);
+  --teal: #9ef8df;
+  --sand: #f8ead1;
+  --alert: #ff9b70;
   background:
     radial-gradient(circle at top, rgba(255, 214, 152, 0.18), transparent 42%),
     linear-gradient(180deg, #1f1712 0%, #120c09 100%);
@@ -56,6 +61,30 @@ button {
   z-index: 1;
 }
 
+.game-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 42%, rgba(9, 7, 5, 0.18) 100%),
+    radial-gradient(circle at 15% 15%, rgba(255, 209, 145, 0.1), transparent 24%);
+  opacity: 0.9;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.game-shell.is-danger::after {
+  background:
+    radial-gradient(circle at 50% 50%, transparent 36%, rgba(56, 18, 10, 0.3) 100%),
+    radial-gradient(circle at 85% 18%, rgba(255, 114, 74, 0.12), transparent 24%);
+}
+
+.game-shell.is-low-health::after {
+  background:
+    radial-gradient(circle at 50% 50%, transparent 28%, rgba(120, 25, 12, 0.42) 100%),
+    radial-gradient(circle at 50% 50%, rgba(255, 130, 94, 0.1), transparent 20%);
+}
+
 .game-stage,
 .game-canvas {
   position: absolute;
@@ -103,8 +132,8 @@ button {
 .resource-card,
 .menu-card,
 .mobile-btn {
-  background: linear-gradient(180deg, rgba(46, 27, 16, 0.88), rgba(24, 16, 12, 0.88));
-  border: 1px solid rgba(255, 214, 160, 0.18);
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(14px);
 }
@@ -113,6 +142,36 @@ button {
   max-width: 420px;
   padding: 18px 20px;
   border-radius: 24px;
+}
+
+.status-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(255, 244, 227, 0.06);
+  color: rgba(248, 234, 209, 0.8);
+  font-size: 0.88rem;
+}
+
+.status-banner strong {
+  color: #fff4df;
+}
+
+.status-banner.calm {
+  border: 1px solid rgba(151, 255, 227, 0.12);
+}
+
+.status-banner.danger {
+  border: 1px solid rgba(255, 129, 91, 0.18);
+  color: #ffd9c5;
+}
+
+.status-banner.warning {
+  border: 1px solid rgba(255, 158, 109, 0.26);
+  color: #ffe2c5;
 }
 
 .brand-card h1,
@@ -189,6 +248,14 @@ button {
   background: linear-gradient(90deg, #ff9a6d, #ffd08f);
 }
 
+.sprint-fill {
+  background: linear-gradient(90deg, #78d7ff, #9ef8df);
+}
+
+.bite-fill {
+  background: linear-gradient(90deg, #ffc777, #ff9562);
+}
+
 .dna-fill {
   background: linear-gradient(90deg, #63ffe3, #bbfff3);
 }
@@ -205,6 +272,13 @@ button {
 .panel-card {
   border-radius: 24px;
   padding: 18px;
+}
+
+.zone-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 14px;
 }
 
 .panel-heading {
@@ -228,6 +302,18 @@ button {
 .zone-pill.active {
   color: #10231e;
   background: linear-gradient(135deg, #79ffd9, #bffff0);
+}
+
+.zone-chip {
+  align-self: flex-start;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: rgba(255, 244, 227, 0.08);
+  border: 1px solid rgba(255, 214, 160, 0.12);
+  color: rgba(248, 234, 209, 0.84);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .upgrade-list {
@@ -282,6 +368,38 @@ button {
   cursor: not-allowed;
 }
 
+.signal-copy {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 214, 160, 0.1);
+}
+
+.hunt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.hunt-stat {
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 244, 227, 0.05);
+}
+
+.hunt-stat span {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(248, 234, 209, 0.7);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.hunt-stat strong {
+  font-size: 1.4rem;
+}
+
 .upgrade-btn:not(:disabled):hover,
 .utility-btn:hover,
 .start-btn:hover,
@@ -303,10 +421,37 @@ button {
   max-width: 420px;
 }
 
+.loop-card.danger {
+  border-color: rgba(255, 129, 91, 0.18);
+}
+
+.loop-card.warning {
+  border-color: rgba(255, 158, 109, 0.24);
+}
+
 .utility-card {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.utility-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: 8px;
+  color: rgba(248, 234, 209, 0.76);
+}
+
+.utility-copy span {
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.utility-copy strong {
+  font-size: 1.2rem;
+  color: #fff4df;
 }
 
 .utility-btn {
@@ -338,6 +483,32 @@ button {
   max-width: 13ch;
   margin-bottom: 12px;
   font-size: clamp(2rem, 4vw, 3.2rem);
+}
+
+.menu-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.menu-stats div {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 244, 227, 0.05);
+}
+
+.menu-stats span {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(248, 234, 209, 0.72);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.menu-stats strong {
+  font-size: 1.35rem;
 }
 
 .menu-grid {
@@ -471,12 +642,17 @@ button {
   }
 
   .resource-card {
-    flex: 1 1 0;
+    flex: 1 1 160px;
     min-width: 0;
   }
 
   .menu-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hunt-grid,
+  .menu-stats {
+    grid-template-columns: 1fr 1fr;
   }
 
   .mobile-controls {
@@ -503,6 +679,11 @@ button {
 
   .menu-card {
     padding: 20px;
+  }
+
+  .hunt-grid,
+  .menu-stats {
+    grid-template-columns: 1fr;
   }
 
   .loop-card {

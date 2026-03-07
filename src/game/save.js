@@ -2,10 +2,12 @@ const STORAGE_KEY = "bone-dunes-save-v1";
 
 export const DEFAULT_SAVE = {
   dna: 0,
+  bestRun: 0,
   upgrades: {
     speed: 0,
     health: 0,
     bite: 0,
+    cooldown: 0,
     crest: 0,
   },
 };
@@ -24,6 +26,7 @@ export function loadSave() {
     const parsed = JSON.parse(raw);
     return {
       dna: Number.isFinite(parsed?.dna) ? parsed.dna : DEFAULT_SAVE.dna,
+      bestRun: Number.isFinite(parsed?.bestRun) ? parsed.bestRun : DEFAULT_SAVE.bestRun,
       upgrades: {
         ...DEFAULT_SAVE.upgrades,
         ...(parsed?.upgrades ?? {}),
@@ -41,6 +44,7 @@ export function saveProgress(payload) {
 
   const snapshot = {
     dna: Math.max(0, Math.round(payload.dna ?? 0)),
+    bestRun: Math.max(0, Math.round(payload.bestRun ?? DEFAULT_SAVE.bestRun)),
     upgrades: {
       ...DEFAULT_SAVE.upgrades,
       ...(payload.upgrades ?? {}),

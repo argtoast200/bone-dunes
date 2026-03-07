@@ -177,6 +177,58 @@ function addGlowPlant(group, x, z, scale, swayNodes) {
   });
 }
 
+function addBoneSpire(group, x, z, scale, rotation = 0, glow = false) {
+  const spire = new THREE.Group();
+  spire.position.set(x, getTerrainHeight(x, z), z);
+  spire.rotation.y = rotation;
+
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28 * scale, 0.55 * scale, 6.2 * scale, 6),
+    new THREE.MeshStandardMaterial({
+      color: boneColor,
+      emissive: glow ? 0xffb078 : 0x000000,
+      emissiveIntensity: glow ? 0.28 : 0,
+      flatShading: true,
+      roughness: 0.9,
+    }),
+  );
+  shaft.position.y = 3 * scale;
+  shaft.rotation.z = 0.06;
+  shaft.castShadow = true;
+  shaft.receiveShadow = true;
+  spire.add(shaft);
+
+  const shard = new THREE.Mesh(
+    new THREE.ConeGeometry(0.65 * scale, 2 * scale, 5),
+    new THREE.MeshStandardMaterial({
+      color: glow ? 0xf7c79b : 0xe8d6b8,
+      emissive: glow ? 0xff8b5b : 0x000000,
+      emissiveIntensity: glow ? 0.3 : 0,
+      flatShading: true,
+      roughness: 0.84,
+    }),
+  );
+  shard.position.set(0, 6.6 * scale, 0.1 * scale);
+  shard.rotation.z = 0.12;
+  shard.castShadow = true;
+  spire.add(shard);
+
+  const brace = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34 * scale, 1.9 * scale, 0.8 * scale),
+    new THREE.MeshStandardMaterial({
+      color: glow ? 0x8f543d : 0x6f503d,
+      flatShading: true,
+      roughness: 0.98,
+    }),
+  );
+  brace.position.set(0.4 * scale, 1.4 * scale, -0.25 * scale);
+  brace.rotation.set(0.2, 0.25, -0.14);
+  brace.castShadow = true;
+  spire.add(brace);
+
+  group.add(spire);
+}
+
 function createDustCloud() {
   const count = 180;
   const positions = new Float32Array(count * 3);
@@ -218,6 +270,50 @@ function createDustCloud() {
   });
 
   return new THREE.Points(geometry, material);
+}
+
+function createZoneParticles({ count, centerX, centerZ, radius, color, altColor, minHeight, maxHeight, size }) {
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const seeds = new Float32Array(count);
+
+  for (let index = 0; index < count; index += 1) {
+    const angle = Math.random() * Math.PI * 2;
+    const distance = Math.sqrt(Math.random()) * radius;
+    const x = centerX + Math.cos(angle) * distance;
+    const z = centerZ + Math.sin(angle) * distance;
+    const y = getTerrainHeight(x, z) + minHeight + Math.random() * (maxHeight - minHeight);
+
+    positions[index * 3] = x;
+    positions[index * 3 + 1] = y;
+    positions[index * 3 + 2] = z;
+
+    tempColor.set(index % 3 === 0 ? altColor : color);
+    tempColor.offsetHSL((Math.random() - 0.5) * 0.05, 0, (Math.random() - 0.5) * 0.08);
+    colors[index * 3] = tempColor.r;
+    colors[index * 3 + 1] = tempColor.g;
+    colors[index * 3 + 2] = tempColor.b;
+    seeds[index] = Math.random() * Math.PI * 2;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.userData.basePositions = positions.slice();
+  geometry.userData.seeds = seeds;
+  geometry.userData.center = { x: centerX, z: centerZ };
+
+  return new THREE.Points(
+    geometry,
+    new THREE.PointsMaterial({
+      size,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      sizeAttenuation: true,
+      depthWrite: false,
+    }),
+  );
 }
 
 function addNest(group) {
@@ -273,7 +369,20 @@ function addNest(group) {
   safeRing.position.y = 0.05;
   nest.add(safeRing);
 
+  for (let index = 0; index < 4; index += 1) {
+    const angle = (index / 4) * Math.PI * 2 + 0.35;
+    addBoneSpire(
+      group,
+      NEST_POSITION.x + Math.cos(angle) * (NEST_POSITION.radius - 1.8),
+      NEST_POSITION.z + Math.sin(angle) * (NEST_POSITION.radius - 1.8),
+      0.55,
+      angle + Math.PI * 0.5,
+      true,
+    );
+  }
+
   group.add(nest);
+  return { nest, safeRing };
 }
 
 function addDangerMarker(group) {
@@ -305,7 +414,20 @@ function addDangerMarker(group) {
     );
   }
 
+  for (let index = 0; index < 5; index += 1) {
+    const angle = (index / 5) * Math.PI * 2 + 0.2;
+    addBoneSpire(
+      group,
+      DANGER_ZONE.x + Math.cos(angle) * (DANGER_ZONE.radius - 1.6),
+      DANGER_ZONE.z + Math.sin(angle) * (DANGER_ZONE.radius - 1.6),
+      0.82,
+      angle,
+      true,
+    );
+  }
+
   group.add(marker);
+  return { marker, ring };
 }
 
 export function buildWorld(scene) {
@@ -350,8 +472,8 @@ export function buildWorld(scene) {
   terrain.receiveShadow = true;
   world.add(terrain);
 
-  addNest(world);
-  addDangerMarker(world);
+  const nest = addNest(world);
+  const dangerMarker = addDangerMarker(world);
 
   [
     [-35, 10, 1.1, 0.3],
@@ -361,6 +483,9 @@ export function buildWorld(scene) {
     [8, -21, 1.4, 1.4],
     [-20, -26, 1.2, 2.5],
     [39, -28, 1.1, 0.4],
+    [-31, 30, 1.15, 0.7],
+    [2, -30, 1.25, 1.9],
+    [34, 18, 1.05, 2.4],
   ].forEach(([x, z, scale, rotation]) => addRockCluster(world, x, z, scale, rotation));
 
   [
@@ -368,12 +493,16 @@ export function buildWorld(scene) {
     [9, 10, 0.9, 1.5],
     [23, -10, 1.05, 0.2],
     [32, -25, 1.15, 2.1],
+    [18, -31, 1.05, 0.8],
+    [-28, 4, 0.92, 2.4],
   ].forEach(([x, z, scale, rotation]) => addBoneRibs(world, x, z, scale, rotation));
 
   [
     [-18, 2, 0.9, 0.4],
     [18, 20, 0.8, 1.8],
     [24, -24, 0.95, 0.25],
+    [2, 28, 0.72, 2.2],
+    [34, -8, 0.9, 1.4],
   ].forEach(([x, z, scale, rotation]) => addArch(world, x, z, scale, rotation));
 
   [
@@ -385,10 +514,46 @@ export function buildWorld(scene) {
     [29, -12, 1.2],
     [34, -20, 1.15],
     [16, -29, 1.1],
+    [26, -28, 1.25],
+    [34, -8, 0.95],
+    [-31, 18, 1.05],
   ].forEach(([x, z, scale]) => addGlowPlant(world, x, z, scale, swayNodes));
+
+  [
+    [40, -20, 1.4, 0.2, true],
+    [28, -37, 1.2, 1.8, true],
+    [-42, -30, 1.15, 2.4, false],
+    [-38, 28, 1.25, 1.2, false],
+    [44, 30, 1.05, 0.6, false],
+  ].forEach(([x, z, scale, rotation, glow]) => addBoneSpire(world, x, z, scale, rotation, glow));
 
   const dust = createDustCloud();
   world.add(dust);
+  const nestMotes = createZoneParticles({
+    count: 70,
+    centerX: NEST_POSITION.x,
+    centerZ: NEST_POSITION.z,
+    radius: NEST_POSITION.radius + 7,
+    color: 0x8ff7da,
+    altColor: 0xffefc9,
+    minHeight: 1.2,
+    maxHeight: 5.2,
+    size: 0.24,
+  });
+  world.add(nestMotes);
+
+  const dangerEmbers = createZoneParticles({
+    count: 90,
+    centerX: DANGER_ZONE.x,
+    centerZ: DANGER_ZONE.z,
+    radius: DANGER_ZONE.radius + 9,
+    color: 0xff834f,
+    altColor: 0xffd29a,
+    minHeight: 0.8,
+    maxHeight: 7.5,
+    size: 0.28,
+  });
+  world.add(dangerEmbers);
 
   const sun = new THREE.Mesh(
     new THREE.IcosahedronGeometry(8, 1),
@@ -419,5 +584,8 @@ export function buildWorld(scene) {
     terrain,
     swayNodes,
     dust,
+    nestRing: nest.safeRing,
+    dangerRing: dangerMarker.ring,
+    zoneParticles: [nestMotes, dangerEmbers],
   };
 }

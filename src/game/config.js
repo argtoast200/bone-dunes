@@ -7,6 +7,7 @@ export const PLAYER_BASE_STATS = {
   speed: 11.5,
   health: 120,
   biteDamage: 22,
+  biteCooldown: 0.62,
 };
 
 export const UPGRADE_DEFS = [
@@ -27,6 +28,12 @@ export const UPGRADE_DEFS = [
     label: "Crushing Jaws",
     costs: [20, 34, 52],
     description: "+9 bite damage",
+  },
+  {
+    key: "cooldown",
+    label: "Quick Glands",
+    costs: [18, 30, 44],
+    description: "-10% bite recovery",
   },
   {
     key: "crest",
