@@ -67,3 +67,32 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope still protected:
   - did not add additional progression trees, new map layers, or content-sprawl systems
   - kept the new addictive loop inside the existing food/combat flow instead of building a separate mode
+
+## 2026-03-06 Combat Feel Pass
+
+- Current request: redesign combat feel without bloating scope, focused on better attack timing, clearer hits, stronger enemy reaction, and more readable arcade creature combat.
+- Combat audit before implementation:
+  - bite was still reading as one blended motion rather than anticipation -> contact -> recovery
+  - hit logic still felt too instantaneous, so landed hits and misses looked too similar
+  - enemy reactions were mostly visual dressing instead of actual interruption/stagger
+  - player attack readability around phase/cooldown/miss state was weak during live play
+  - combat juice existed, but it was too uniform and not shaped differently enough for hits vs kills vs misses
+- Implemented:
+  - replaced the instant bite with a lightweight phased attack flow (`windup`, `strike`, `recovery`) while keeping the same controls and overall architecture
+  - added directional bite arc/snap effects, stronger body/head transforms, and more committed attack posing so the bite reads as intentional
+  - moved hit resolution into the strike phase so contact happens when the animation says it happens
+  - added stronger enemy interruption via stagger/reel timing, telegraph cancel on hit, recoil direction, and more visible weak-enemy reaction
+  - added explicit combat-readability state in the HUD/text state so bite can read as `Coiling`, `Snapping`, `Landed`, `Crushed`, `Missed`, or `Broken`
+- Validation:
+  - `npm run build` passes
+  - shared web-game client screenshot/state captured at `output/web-game/combat-pass-1`
+  - visual inspection: HUD now reflects combat timing state and the attack pass shows clearer strike/readability than the old placeholder bounce
+  - deterministic browser checks:
+    - player attack phases now step `idle -> windup -> strike -> recovery`
+    - a front-facing `Space` bite dealt `22`, left the scavenger in `staggered`, and reported attack result `hit`
+    - a front-facing right-click bite dealt `22`, left the scavenger in `staggered`, and reported attack result `hit`
+    - a whiff cleanly reported attack result `miss`
+    - no browser console errors beyond the React DevTools info banner
+- Scope protected:
+  - did not add combo trees, lock-on systems, animation rigs, or a larger combat ruleset
+  - kept the pass focused on timing, feedback, and reaction quality inside the existing game loop

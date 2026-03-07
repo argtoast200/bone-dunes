@@ -18,6 +18,8 @@ const initialState = {
   maxHealth: 120,
   sprintCharge: 1,
   biteCharge: 1,
+  attackPhase: "idle",
+  attackResult: "ready",
   surgeCharge: 0,
   surgeLevel: 0,
   lowHealth: false,
@@ -78,6 +80,23 @@ export function GameApp() {
   const totalKills = uiState.scavengersDefeated + uiState.predatorsDefeated;
   const zoneTitle = uiState.zone === "nest" ? "Safe Nest" : uiState.zone === "danger" ? "Predator Territory" : "Open Dunes";
   const surgeActive = uiState.surgeCharge > 0.05;
+  const biteStatus = uiState.attackPhase === "windup"
+    ? "Coiling"
+    : uiState.attackPhase === "strike"
+      ? "Snapping"
+      : uiState.attackPhase === "recovery"
+        ? "Recovering"
+        : uiState.attackResult === "hit"
+          ? "Landed"
+          : uiState.attackResult === "kill"
+            ? "Crushed"
+            : uiState.attackResult === "broken"
+              ? "Broken"
+            : uiState.attackResult === "miss"
+              ? "Missed"
+              : uiState.biteCharge >= 0.98
+                ? "Ready"
+                : "Recovering";
   const alertTone = uiState.lowHealth ? "warning" : surgeActive ? "surge" : uiState.zone === "danger" ? "danger" : "calm";
   const alertTitle = uiState.lowHealth ? "Fracture Alert" : surgeActive ? `Feral Surge x${uiState.surgeLevel}` : uiState.zone === "danger" ? "Apex Bonus Live" : "Quiet Window";
   const alertCopy = uiState.lowHealth
@@ -144,9 +163,9 @@ export function GameApp() {
                 </div>
               </div>
 
-              <div className="resource-card">
+              <div className={`resource-card bite-card ${uiState.attackResult}`}>
                 <span>Bite</span>
-                <strong>{uiState.biteCharge >= 0.98 ? "Ready" : "Recovering"}</strong>
+                <strong>{biteStatus}</strong>
                 <div className="meter">
                   <div
                     className="meter-fill bite-fill"
