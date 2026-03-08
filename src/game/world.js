@@ -3,9 +3,11 @@ import * as THREE from "three";
 import {
   BIOME_DEFS,
   DANGER_ZONE,
+  EMBER_RIDGE_ZONE,
   MARSH_ZONE,
   NEST_POSITION,
   ORIGIN_POOL,
+  SALT_FLATS_ZONE,
   SHALLOWS_ZONE,
   WORLD_RADIUS,
 } from "./config";
@@ -38,9 +40,19 @@ export function getBiomeKeyAtPosition(positionOrX, zValue = 0) {
     return "jawBasin";
   }
 
+  const emberDistance = Math.hypot(x - EMBER_RIDGE_ZONE.x, z - EMBER_RIDGE_ZONE.z);
+  if (emberDistance <= EMBER_RIDGE_ZONE.radius + 2) {
+    return "emberRidge";
+  }
+
   const originDistance = Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z);
   if (originDistance <= ORIGIN_POOL.radius + 1.5) {
     return "originWaters";
+  }
+
+  const saltDistance = Math.hypot(x - SALT_FLATS_ZONE.x, z - SALT_FLATS_ZONE.z);
+  if (saltDistance <= SALT_FLATS_ZONE.radius + 2.2) {
+    return "saltFlats";
   }
 
   const marshDistance = Math.hypot(x - MARSH_ZONE.x, z - MARSH_ZONE.z);
@@ -79,15 +91,25 @@ export function getTerrainHeight(x, z) {
   const marshFloor = -1.6 * smoothstep(0, 1, marshFactor);
   const marshHummocks = Math.sin(x * 0.18 + z * 0.05) * Math.cos(z * 0.15 - x * 0.04) * 0.32 * marshFactor;
 
+  const saltDistance = Math.hypot(x - SALT_FLATS_ZONE.x, z - SALT_FLATS_ZONE.z);
+  const saltFactor = Math.max(0, 1 - saltDistance / (SALT_FLATS_ZONE.radius + 7));
+  const saltPanTarget = -0.45 + Math.sin(x * 0.22 + z * 0.07) * 0.12 + Math.cos(z * 0.18 - x * 0.04) * 0.08;
+
   const dangerDistance = Math.hypot(x - DANGER_ZONE.x, z - DANGER_ZONE.z);
   const dangerFactor = Math.max(0, 1 - dangerDistance / (DANGER_ZONE.radius + 6));
   const dangerBowl = -3.8 * smoothstep(0, 1, dangerFactor);
 
+  const emberDistance = Math.hypot(x - EMBER_RIDGE_ZONE.x, z - EMBER_RIDGE_ZONE.z);
+  const emberFactor = Math.max(0, 1 - emberDistance / (EMBER_RIDGE_ZONE.radius + 7));
+  const emberRise = 2.6 * smoothstep(0, 1, emberFactor);
+  const emberRidges = Math.sin(x * 0.24 - z * 0.1) * Math.cos(z * 0.12 + x * 0.05) * 0.58 * emberFactor;
+
   const nestDistance = Math.hypot(x - NEST_POSITION.x, z - NEST_POSITION.z);
   const nestFactor = Math.max(0, 1 - nestDistance / (NEST_POSITION.radius + 5));
   const shorelineLift = smoothstep(-28, -8, x) * smoothstep(0, 1, 1 - Math.abs(z - 18) / 26) * 0.45;
-  const terrainWithBiomes = baseTerrain + originLagoon + shallowsShelf + marshFloor + marshHummocks + shorelineLift;
-  const nestShelf = THREE.MathUtils.lerp(terrainWithBiomes, 0.7, smoothstep(0, 1, nestFactor));
+  const terrainWithBiomes = baseTerrain + originLagoon + shallowsShelf + marshFloor + marshHummocks + shorelineLift + emberRise + emberRidges;
+  const saltFlattened = THREE.MathUtils.lerp(terrainWithBiomes, saltPanTarget, smoothstep(0, 1, saltFactor));
+  const nestShelf = THREE.MathUtils.lerp(saltFlattened, 0.7, smoothstep(0, 1, nestFactor));
 
   const ring = Math.max(0, 1 - Math.abs(Math.hypot(x, z) - (WORLD_RADIUS - 8)) / 10) * -1.4;
 
@@ -684,9 +706,13 @@ export function buildWorld(scene) {
     const originFactor = Math.max(0, 1 - Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z) / (ORIGIN_POOL.radius + 5));
     const shallowsFactor = Math.max(0, 1 - Math.hypot(x - SHALLOWS_ZONE.x, z - SHALLOWS_ZONE.z) / (SHALLOWS_ZONE.radius + 5));
     const marshFactor = Math.max(0, 1 - Math.hypot(x - MARSH_ZONE.x, z - MARSH_ZONE.z) / (MARSH_ZONE.radius + 4));
+    const saltFactor = Math.max(0, 1 - Math.hypot(x - SALT_FLATS_ZONE.x, z - SALT_FLATS_ZONE.z) / (SALT_FLATS_ZONE.radius + 5));
+    const emberFactor = Math.max(0, 1 - Math.hypot(x - EMBER_RIDGE_ZONE.x, z - EMBER_RIDGE_ZONE.z) / (EMBER_RIDGE_ZONE.radius + 6));
     tempColor.lerp(new THREE.Color(0x86b9a4), originFactor * 0.74);
     tempColor.lerp(new THREE.Color(0xb7d5b8), shallowsFactor * 0.28);
     tempColor.lerp(new THREE.Color(0x7a8660), marshFactor * 0.5);
+    tempColor.lerp(new THREE.Color(0xd9e3cf), saltFactor * 0.72);
+    tempColor.lerp(new THREE.Color(0xa95e47), emberFactor * 0.64);
 
     const dangerBlend = Math.max(0, 1 - Math.hypot(x - DANGER_ZONE.x, z - DANGER_ZONE.z) / (DANGER_ZONE.radius + 8));
     tempColor.lerp(new THREE.Color(0xaa6342), dangerBlend * 0.38);
@@ -747,7 +773,18 @@ export function buildWorld(scene) {
     [24, -24, 0.95, 0.25],
     [2, 28, 0.72, 2.2],
     [34, -8, 0.9, 1.4],
+    [-30, -27, 0.82, 1.1],
+    [34, 28, 0.78, 2.4],
   ].forEach(([x, z, scale, rotation]) => addArch(world, x, z, scale, rotation));
+
+  [
+    [-35, -18, 0.92, 0.35, 0xb8ab98],
+    [-27, -30, 1.05, 1.8, 0xc4b9a7],
+    [-22, -17, 0.88, 2.2, 0xb0a28f],
+    [26, 25, 1.08, 1.1, 0x6b453b],
+    [35, 31, 1.15, 0.4, 0x5b3b34],
+    [40, 20, 0.92, 2.3, 0x74493d],
+  ].forEach(([x, z, scale, rotation, tint]) => addRockCluster(world, x, z, scale, rotation, tint));
 
   [
     [-39, 27, 0.8],
@@ -765,6 +802,8 @@ export function buildWorld(scene) {
     [26, -28, 1.25],
     [34, -8, 0.95],
     [-31, 18, 1.05],
+    [27, 27, 0.96],
+    [33, 33, 1.05],
   ].forEach(([x, z, scale]) => addGlowPlant(world, x, z, scale, swayNodes));
 
   [
@@ -777,6 +816,10 @@ export function buildWorld(scene) {
     [-42, -30, 1.15, 2.4, false],
     [-38, 28, 1.25, 1.2, false],
     [44, 30, 1.05, 0.6, false],
+    [-34, -26, 1.12, 1.4, false],
+    [-24, -18, 0.96, 0.6, false],
+    [26, 31, 1.18, 0.2, true],
+    [36, 24, 1.1, 1.5, true],
   ].forEach(([x, z, scale, rotation, glow]) => addBoneSpire(world, x, z, scale, rotation, glow));
 
   const dust = createDustCloud();
@@ -794,6 +837,14 @@ export function buildWorld(scene) {
     [-5, 35, 0.88],
     [0, 27, 0.86],
   ].forEach(([x, z, scale]) => addReedPatch(world, x, z, scale, swayNodes));
+
+  [
+    [-35, -22, 0.92],
+    [-30, -29, 0.84],
+    [-24, -18, 0.86],
+    [27, 31, 0.88],
+    [34, 24, 0.94],
+  ].forEach(([x, z, scale]) => addCoralCluster(world, x, z, scale));
   const nestMotes = createZoneParticles({
     count: 70,
     centerX: NEST_POSITION.x,
@@ -833,6 +884,19 @@ export function buildWorld(scene) {
   });
   world.add(marshMotes);
 
+  const saltMotes = createZoneParticles({
+    count: 72,
+    centerX: SALT_FLATS_ZONE.x,
+    centerZ: SALT_FLATS_ZONE.z,
+    radius: SALT_FLATS_ZONE.radius + 4,
+    color: 0xecf5e2,
+    altColor: 0xa7f2df,
+    minHeight: 0.4,
+    maxHeight: 3.2,
+    size: 0.18,
+  });
+  world.add(saltMotes);
+
   const dangerEmbers = createZoneParticles({
     count: 90,
     centerX: DANGER_ZONE.x,
@@ -845,6 +909,19 @@ export function buildWorld(scene) {
     size: 0.28,
   });
   world.add(dangerEmbers);
+
+  const emberMotes = createZoneParticles({
+    count: 84,
+    centerX: EMBER_RIDGE_ZONE.x,
+    centerZ: EMBER_RIDGE_ZONE.z,
+    radius: EMBER_RIDGE_ZONE.radius + 5,
+    color: 0xff8f62,
+    altColor: 0xffd1a1,
+    minHeight: 0.8,
+    maxHeight: 6.2,
+    size: 0.22,
+  });
+  world.add(emberMotes);
 
   const sun = new THREE.Mesh(
     new THREE.IcosahedronGeometry(8, 1),
@@ -903,7 +980,7 @@ export function buildWorld(scene) {
     dust,
     nestRing: nest.safeRing,
     dangerRing: dangerMarker.ring,
-    zoneParticles: [nestMotes, originMotes, marshMotes, dangerEmbers],
+    zoneParticles: [nestMotes, originMotes, marshMotes, saltMotes, dangerEmbers, emberMotes],
     waterSurfaces: [
       { mesh: deepLagoon, baseY: ORIGIN_POOL.surfaceY, drift: 0.06, scale: 0.02, phase: 0 },
       { mesh: shorelineWater, baseY: ORIGIN_POOL.surfaceY + 0.18, drift: 0.04, scale: 0.015, phase: 1.1 },

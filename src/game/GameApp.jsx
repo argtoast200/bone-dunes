@@ -6,7 +6,7 @@ const initialState = {
   mode: "menu",
   zone: "nest",
   message: "Wake at the nest, gather DNA, then return to lay the next egg.",
-  objective: "Evolve at the nest, hatch a stronger body, and grow it in the dunes.",
+  objective: "Evolve at the nest, hatch a stronger body, and grow it across the frontier biomes.",
   dna: 0,
   speciesXp: 0,
   bestRun: 0,
@@ -15,7 +15,7 @@ const initialState = {
   scavengersDefeated: 0,
   predatorsDefeated: 0,
   herbivoresDefeated: 0,
-  huntSummary: "Fresh line. Gather DNA, lay a new egg, then grow it in the dunes.",
+  huntSummary: "Fresh line. Gather DNA, lay a new egg, then grow it across the frontier biomes.",
   health: 120,
   maxHealth: 120,
   sprintCharge: 1,
@@ -546,7 +546,7 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div className="menu-panel">
                     <h3>Core Loop</h3>
-                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, dunes, and basin frontiers. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
+                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, dunes, salt flats, basin, and ember ridges. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>
@@ -727,7 +727,7 @@ export function GameApp() {
                           {" "}
                           discovered
                         </strong>
-                        <small>New parts come from species encounters or mastering the shallows and marsh frontiers.</small>
+                        <small>New parts come from species encounters or mastering frontier biomes.</small>
                       </div>
                       <div className="species-relation-row">
                         {uiState.speciesRelations.map((relation) => (

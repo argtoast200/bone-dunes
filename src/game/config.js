@@ -12,6 +12,8 @@ export const ORIGIN_POOL = {
 };
 export const SHALLOWS_ZONE = { x: -16, z: 18, radius: 19 };
 export const MARSH_ZONE = { x: -8, z: 30, radius: 15 };
+export const SALT_FLATS_ZONE = { x: -30, z: -23, radius: 16 };
+export const EMBER_RIDGE_ZONE = { x: 31, z: 27, radius: 15 };
 
 export const BIOME_DEFS = {
   originWaters: {
@@ -82,6 +84,23 @@ export const BIOME_DEFS = {
     order: 3,
     unlockHint: "Raise a body past adolescent or reach 8 XP",
   },
+  saltFlats: {
+    key: "saltFlats",
+    label: "Salt Flats",
+    shortLabel: "Flats",
+    summary: "Wind-burnished hardpan where runners and gliders cross fast but stay exposed.",
+    pressure: "Runner frontier",
+    uiColor: 0xe4f0df,
+    speed: 1.12,
+    traction: 1.08,
+    dust: 0.44,
+    dnaMultiplier: 1.12,
+    masteryRate: 1.14,
+    newbornMasteryRate: 0.72,
+    water: false,
+    order: 4,
+    unlockHint: "Reach 14 XP, master Bone Dunes (12), or evolve a true runner.",
+  },
   jawBasin: {
     key: "jawBasin",
     label: "Jaw Basin",
@@ -96,8 +115,25 @@ export const BIOME_DEFS = {
     masteryRate: 1.18,
     newbornMasteryRate: 0.55,
     water: false,
-    order: 4,
+    order: 5,
     unlockHint: "Reach 18 XP or draw Bone Stalkers into open war",
+  },
+  emberRidge: {
+    key: "emberRidge",
+    label: "Ember Ridge",
+    shortLabel: "Ridge",
+    summary: "Raised basalt and ember vents where heavy bodies win short violent fights.",
+    pressure: "Apex frontier",
+    uiColor: 0xff9f78,
+    speed: 0.94,
+    traction: 1.03,
+    dust: 0.92,
+    dnaMultiplier: 1.2,
+    masteryRate: 1.22,
+    newbornMasteryRate: 0.46,
+    water: false,
+    order: 6,
+    unlockHint: "Reach 26 XP, master Jaw Basin (14), or become a true bruiser.",
   },
 };
 
@@ -127,7 +163,10 @@ export const UPGRADE_DEFS = [
     costs: [18, 32],
     description: "+4 bite damage and stronger enemy intimidation",
     unlock: { type: "alpha", speciesId: "boneStalker" },
-    unlockRoutes: [{ type: "alpha", speciesId: "boneStalker" }],
+    unlockRoutes: [
+      { type: "alpha", speciesId: "boneStalker" },
+      { type: "frontier", biomeKey: "emberRidge", mastery: 14 },
+    ],
   },
   {
     key: "crest",
@@ -188,7 +227,10 @@ export const UPGRADE_DEFS = [
     costs: [18, 32, 46],
     description: "+16 max health and +9% defense per level",
     unlock: { type: "ally", speciesId: "boneStalker" },
-    unlockRoutes: [{ type: "ally", speciesId: "boneStalker" }],
+    unlockRoutes: [
+      { type: "ally", speciesId: "boneStalker" },
+      { type: "frontier", biomeKey: "saltFlats", mastery: 15 },
+    ],
   },
   {
     key: "glow",
@@ -222,11 +264,17 @@ export const FOOD_SPAWNS = [
   { x: 29, z: 11, dna: 4, rare: false },
   { x: -27, z: -1, dna: 3, rare: false },
   { x: -16, z: -13, dna: 4, rare: false },
+  { x: -32, z: -18, dna: 4, rare: false },
+  { x: -36, z: -26, dna: 5, rare: true },
+  { x: -24, z: -31, dna: 6, rare: true },
   { x: -4, z: -17, dna: 4, rare: false },
   { x: 6, z: -10, dna: 4, rare: false },
   { x: 18, z: -5, dna: 5, rare: true },
   { x: 25, z: -7, dna: 6, rare: true },
   { x: 31, z: -15, dna: 6, rare: true },
+  { x: 24, z: 30, dna: 5, rare: true },
+  { x: 31, z: 34, dna: 6, rare: true },
+  { x: 38, z: 25, dna: 6, rare: true },
   { x: 36, z: -22, dna: 6, rare: true },
   { x: 16, z: -27, dna: 6, rare: true },
   { x: 22, z: -31, dna: 7, rare: true },

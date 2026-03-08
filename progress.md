@@ -668,3 +668,41 @@ Evolution body-plan pass:
       - health `115`
       - body push about `4.64`
       - turn rate about `9.77`
+
+Additional biome pass:
+- Goal:
+  - expand the existing frontier ring with more distinct biomes without breaking the one-map water-origin structure
+- Implemented:
+  - added two new frontier biomes in `src/game/config.js`:
+    - `Salt Flats`
+    - `Ember Ridge`
+  - each biome now has its own:
+    - unlock rule
+    - speed / traction / dust / DNA reward tuning
+    - mastery pacing
+    - UI pressure text
+  - tied the new frontiers back into evolution by adding frontier blueprint routes:
+    - `Hook Horns` can now unlock from `Ember Ridge (14)`
+    - `Rib Spikes` can now unlock from `Salt Flats (15)`
+  - extended `src/game/world.js` so the new biomes are actual places on the map instead of abstract unlocks:
+    - `Salt Flats` hardpan basin carved into the southwest frontier with paler ground, exposed arches, salt motes, and extra rare food
+    - `Ember Ridge` raised basalt frontier in the northeast with hotter terrain tint, ember motes, glowing spires, and extra rare food
+  - updated path affinity tuning in `src/game/SporeSliceGame.js` so the existing species paths now read more clearly against the larger frontier ring:
+    - `Water Glider` and `Dune Runner` now prefer `Salt Flats`
+    - `Basin Bruiser` and `Marsh Ambusher` gain better footing / attack identity in `Ember Ridge`
+  - updated menu / editor copy in `src/game/GameApp.jsx` so the game no longer talks as if the world stops at marsh, dunes, and basin
+- Validation:
+  - `npm run build` passes after the biome expansion
+  - required standalone `$WEB_GAME_CLIENT` run completed:
+    - `output/web-game/biome-frontier-pass-2/shot-0.png`
+    - `output/web-game/biome-frontier-pass-2/state-0.json`
+  - saved manual frontier inspection captures:
+    - `output/web-game/biome-frontier-pass-2/salt-flats-shot.png`
+    - `output/web-game/biome-frontier-pass-2/ember-ridge-shot.png`
+  - deterministic browser checks:
+    - teleporting the player to `(-30, -23)` reports biome `Salt Flats` with summary `Wind-burnished hardpan where runners and gliders cross fast but stay exposed.`
+    - teleporting the player to `(31, 27)` reports biome `Ember Ridge` with summary `Raised basalt and ember vents where heavy bodies win short violent fights.`
+    - `Salt Flats` stays locked below threshold, then unlocks at either `14 XP` or `Bone Dunes mastery 12`
+    - `Ember Ridge` stays locked below threshold, then unlocks at either `26 XP` or `Jaw Basin mastery 14`
+    - `Salt Flats` now hosts new nearby food nodes at roughly `(-32, -18)`, `(-36, -26)`, and `(-24, -31)`
+    - `Ember Ridge` now hosts new nearby food nodes at roughly `(24, 30)`, `(31, 34)`, and `(38, 25)`
