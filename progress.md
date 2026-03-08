@@ -784,3 +784,43 @@ Additional biome pass:
     - cloud groups were sampled at horizon and mountain heights, including low banks near `(-20.79, 18.46, 17.92)`, `(7.22, 18.44, 9.5)`, and `(26.89, 19.19, -4.39)`
   - browser console review:
     - fresh page load is clean aside from the React DevTools info banner
+
+## 2026-03-07 Waterfall Cushion Pass
+
+- Current request:
+  - create waterfalls that prevent fall damage
+- Implemented:
+  - added two animated waterfall landmarks in `src/game/world.js`:
+    - `Ember Cascade`
+    - `Basin Falls`
+  - each waterfall now has:
+    - a falling water ribbon/core
+    - animated droplets
+    - a crest spill
+    - a plunge pool + foam ring
+    - a mist cloud merged into the existing ambient particle pass
+  - exposed waterfall basin metadata through the built world object so gameplay can reason about safe landing zones without adding a heavy new physics system
+  - updated `src/game/SporeSliceGame.js` so high-impact landings check nearby waterfall plunge pools before applying fall damage
+  - added `lastLandingSurface` plus nearby waterfall distance data to `render_game_to_text()` for deterministic browser validation
+  - tuned landing feedback so waterfall touchdowns produce brighter splash-like bursts instead of dry dust and added small biome objective hints that teach the player those pools can save a bad drop
+  - widened the plunge-pool safe radius after full-chain landing tests showed collision resolution could nudge the player slightly off-center at touchdown
+- Validation:
+  - `npm run build` passes after the waterfall pass
+  - required standalone `$WEB_GAME_CLIENT` runs completed:
+    - `output/web-game/waterfall-pass-1/shot-0.png`
+    - `output/web-game/waterfall-pass-1/state-0.json`
+    - `output/web-game/waterfall-pass-2/shot-0.png`
+    - `output/web-game/waterfall-pass-2/state-0.json`
+  - saved controlled waterfall capture:
+    - `output/web-game/waterfall-pass-2/ember-cascade.png`
+  - visual inspection:
+    - confirmed the live world now contains visible turquoise plunge pools and falling water features in the mountain biomes
+    - the generic origin-water autostart angle remains a poor showcase because foreground rocks still occlude much of the scene
+  - deterministic browser checks:
+    - `game.world.waterfallBasins` now exposes:
+      - `Ember Cascade` at about `(24.6, 19.8)` with safe radius `3.6`
+      - `Basin Falls` at about `(31.9, -21.6)` with safe radius `3.2`
+    - forcing a high landing into `Basin Falls` kept health at `120`, reported `lastLandingSurface: "waterfall"`, and emitted `Basin Falls catches the fall in a burst of cold spray.`
+    - forcing the same style of landing onto nearby dry ground at about `(27.1, -18.1)` dropped health to `28`, recorded `lastFallDamage: 92`, and kept `lastLandingSurface: "ground"`
+  - browser console review:
+    - fresh page load is clean aside from the React DevTools info banner

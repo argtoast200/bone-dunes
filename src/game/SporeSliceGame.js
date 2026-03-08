@@ -1723,6 +1723,7 @@ export class SporeSliceGame {
       socialSuccess: 0,
       lastFallDamage: 0,
       lastLandingSpeed: 0,
+      lastLandingSurface: "ground",
       lean: 0,
       bank: 0,
       turnMomentum: 0,
@@ -2600,6 +2601,21 @@ export class SporeSliceGame {
 
   getTerritoryForSpecies(speciesId) {
     return this.ecosystem.territories.find((territory) => territory.speciesId === speciesId) ?? null;
+  }
+
+  getWaterfallBasinAtPosition(position) {
+    let bestBasin = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    (this.world.waterfallBasins ?? []).forEach((basin) => {
+      const distance = Math.hypot(position.x - basin.x, position.z - basin.z);
+      if (distance <= basin.safeRadius && distance < bestDistance) {
+        bestDistance = distance;
+        bestBasin = basin;
+      }
+    });
+
+    return bestBasin;
   }
 
   getCurrentTerritoryForPosition(position) {
@@ -4069,6 +4085,7 @@ export class SporeSliceGame {
           jumpHeight: Number(this.player.jumpOffset.toFixed(2)),
           lastFallDamage: this.player.lastFallDamage,
           lastLandingSpeed: Number(this.player.lastLandingSpeed.toFixed(2)),
+          lastLandingSurface: this.player.lastLandingSurface,
           attackImpact: Number(this.player.attackImpact.toFixed(2)),
           pathLabel: activePath.label,
           shoreLabel: activePath.shoreLabel,
@@ -4078,6 +4095,15 @@ export class SporeSliceGame {
           stageLabel: activeMaturation?.label ?? `Fully Grown ${SPECIES_DISPLAY_NAME}`,
           growth: activeCreature ? Number(activeCreature.growth.toFixed(3)) : 1,
         },
+        waterfalls: (this.world.waterfallBasins ?? [])
+          .map((basin) => ({
+            key: basin.key,
+            label: basin.label,
+            distance: Number(Math.hypot(playerPosition.x - basin.x, playerPosition.z - basin.z).toFixed(1)),
+            safeRadius: Number(basin.safeRadius.toFixed(1)),
+          }))
+          .sort((left, right) => left.distance - right.distance)
+          .slice(0, 2),
         hud: {
           speciesName: SPECIES_DISPLAY_NAME,
           maturationLabel: activeMaturation?.label ?? `Fully Grown ${SPECIES_DISPLAY_NAME}`,
@@ -4423,6 +4449,7 @@ export class SporeSliceGame {
     this.player.socialSuccess = 0;
     this.player.lastFallDamage = 0;
     this.player.lastLandingSpeed = 0;
+    this.player.lastLandingSurface = "ground";
     this.state.editorOpen = false;
     this.clearSocialEncounter();
     this.clearFeralSurge();
@@ -4839,6 +4866,7 @@ export class SporeSliceGame {
     this.player.isAirborne = true;
     this.player.airbornePeakY = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT + this.player.jumpOffset;
     this.player.lastFallDamage = 0;
+    this.player.lastLandingSurface = "airborne";
     this.player.attackImpact = Math.max(this.player.attackImpact, 0.18);
     this.cameraFovKick = Math.max(this.cameraFovKick, 0.65);
     this.cameraShake = Math.max(this.cameraShake, 0.04);
@@ -4854,8 +4882,15 @@ export class SporeSliceGame {
 
   applyFallDamage(impactSpeed, dropDistance) {
     this.player.lastLandingSpeed = impactSpeed;
+    const waterfallBasin = this.getWaterfallBasinAtPosition(this.player.group.position);
+    this.player.lastLandingSurface = waterfallBasin ? "waterfall" : "ground";
     if (dropDistance < FALL_DAMAGE_MIN_DROP || impactSpeed <= FALL_DAMAGE_SAFE_SPEED) {
       this.player.lastFallDamage = 0;
+      return 0;
+    }
+    if (waterfallBasin) {
+      this.player.lastFallDamage = 0;
+      this.state.message = `${waterfallBasin.label} catches the fall in a burst of cold spray.`;
       return 0;
     }
 
@@ -5977,16 +6012,26 @@ export class SporeSliceGame {
         this.player.airbornePeakY = groundHeight;
         this.applyFallDamage(landingSpeed, dropDistance);
         if (wasAirborne) {
+          const landingWaterfall = this.getWaterfallBasinAtPosition(this.player.group.position);
           this.player.attackImpact = Math.max(this.player.attackImpact, 0.24);
-          this.cameraShake = Math.max(this.cameraShake, terrainBiome.water ? 0.04 : 0.07);
-          this.cameraFovKick = Math.max(this.cameraFovKick, terrainBiome.water ? 0.35 : 0.55);
+          this.cameraShake = Math.max(this.cameraShake, landingWaterfall ? 0.05 : terrainBiome.water ? 0.04 : 0.07);
+          this.cameraFovKick = Math.max(this.cameraFovKick, landingWaterfall ? 0.42 : terrainBiome.water ? 0.35 : 0.55);
           this.spawnGroundDust(this.player.group.position, {
-            color: terrainBiome.water ? 0x90f6e4 : this.state.zone === "danger" ? 0xca865f : 0xd8b287,
-            ttl: terrainBiome.water ? 0.24 : 0.2,
-            size: terrainBiome.water ? 0.68 : 0.78 + this.player.terrain.dust * 0.18,
-            shards: terrainBiome.water ? 5 : 4,
-            rise: terrainBiome.water ? 0.09 : 0.06,
+            color: landingWaterfall ? 0xa4fff4 : terrainBiome.water ? 0x90f6e4 : this.state.zone === "danger" ? 0xca865f : 0xd8b287,
+            ttl: landingWaterfall ? 0.28 : terrainBiome.water ? 0.24 : 0.2,
+            size: landingWaterfall ? 0.94 : terrainBiome.water ? 0.68 : 0.78 + this.player.terrain.dust * 0.18,
+            shards: landingWaterfall ? 6 : terrainBiome.water ? 5 : 4,
+            rise: landingWaterfall ? 0.11 : terrainBiome.water ? 0.09 : 0.06,
           });
+          if (landingWaterfall) {
+            this.spawnBurst(this.player.group.position, {
+              color: 0xd7ffff,
+              ttl: 0.28,
+              size: 1.08,
+              shards: 7,
+              rise: 0.12,
+            });
+          }
         }
       } else {
         this.player.isAirborne = true;
@@ -6144,7 +6189,7 @@ export class SporeSliceGame {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
       this.state.objective = "Species nest: heal, spend DNA, lay an egg, then send the newborn back through the origin waters.";
     } else if (this.state.zone === "danger") {
-      this.state.objective = "Jaw Basin: richer DNA, crater walls, and harder fights. Master it without feeding the drop.";
+      this.state.objective = "Jaw Basin: richer DNA, crater walls, and harder fights. Basin Falls can save a brutal landing if you hit the pool.";
     } else if (!activeFrontier) {
       this.state.objective = `${currentBiome.label} is still a hard frontier. Grow the species or return to the nest before claiming it.`;
     } else if (!currentBiome.water && shoreReadiness < SHORE_READY_THRESHOLD) {
@@ -6158,7 +6203,7 @@ export class SporeSliceGame {
     } else if (currentBiome.key === "saltFlats") {
       this.state.objective = `${activePath.label}: Salt Flats reward bodies that can keep traction and survive long exposed sprints.`;
     } else if (currentBiome.key === "emberRidge") {
-      this.state.objective = `${activePath.label}: Ember Ridge rewards heavy bodies that can climb hard ground, leap gaps, and survive brutal descents.`;
+      this.state.objective = `${activePath.label}: Ember Ridge rewards heavy bodies that can climb hard ground, leap gaps, and trust the cascade pools on brutal descents.`;
     } else {
       this.state.objective = `${activePath.label}: Bone Dunes reward bodies that can hold speed and survive long exposed hunts.`;
     }
@@ -6303,6 +6348,31 @@ export class SporeSliceGame {
         const swell = 1 + Math.sin(this.elapsed * (0.55 + index * 0.12) + surface.phase) * surface.scale;
         surface.mesh.scale.setScalar(swell);
         surface.mesh.material.opacity = (index === 0 ? 0.3 : 0.16) + Math.sin(this.elapsed * (0.65 + index * 0.16) + surface.phase) * 0.015;
+      });
+    }
+    if (this.world.waterfalls) {
+      this.world.waterfalls.forEach((waterfall, index) => {
+        waterfall.sheetMaterials.forEach((material, materialIndex) => {
+          const baseOpacity = materialIndex === 0 ? 0.3 : 0.22;
+          material.opacity = baseOpacity + Math.sin(this.elapsed * (1.8 + materialIndex * 0.35) + index) * 0.03;
+        });
+        waterfall.coreMaterial.opacity = 0.42 + Math.sin(this.elapsed * 2.2 + index * 0.6) * 0.04;
+        waterfall.droplets.forEach((droplet, dropletIndex) => {
+          const progress = (this.elapsed * droplet.userData.speed + droplet.userData.phase) % 1;
+          droplet.position.set(
+            Math.sin(this.elapsed * 3.2 + dropletIndex) * waterfall.width * droplet.userData.sway,
+            -waterfall.length * 0.5 + progress * waterfall.length,
+            Math.cos(this.elapsed * 2.4 + dropletIndex) * waterfall.width * 0.12,
+          );
+          droplet.scale.setScalar(0.88 + Math.sin(this.elapsed * 4 + dropletIndex) * 0.08);
+        });
+        waterfall.pool.position.y = waterfall.basin.y + 0.08 + Math.sin(this.elapsed * (0.95 + index * 0.12)) * 0.02;
+        waterfall.pool.material.opacity = 0.24 + Math.sin(this.elapsed * 1.35 + index) * 0.02;
+        waterfall.foamRing.rotation.z += dt * (0.4 + index * 0.08);
+        waterfall.foamRing.scale.setScalar(1 + Math.sin(this.elapsed * 2.1 + index * 0.45) * 0.04);
+        waterfall.foamRing.material.opacity = 0.28 + Math.sin(this.elapsed * 1.8 + index * 0.4) * 0.04;
+        waterfall.crest.position.y = waterfall.top.y + 0.06 + Math.sin(this.elapsed * 1.6 + index * 0.5) * 0.03;
+        waterfall.crest.material.opacity = 0.2 + Math.sin(this.elapsed * 1.9 + index) * 0.03;
       });
     }
     if (this.world.skyFlocks) {

@@ -20,6 +20,38 @@ const plantStemColor = 0x314b36;
 const plantGlowColor = 0x79f2d2;
 
 const tempColor = new THREE.Color();
+const yAxis = new THREE.Vector3(0, 1, 0);
+
+const WATERFALL_DEFS = [
+  {
+    key: "emberCascade",
+    label: "Ember Cascade",
+    topX: 28.8,
+    topZ: 25.8,
+    baseX: 24.6,
+    baseZ: 19.8,
+    topOffset: 1.15,
+    baseOffset: 0.18,
+    width: 1.75,
+    poolRadius: 2.8,
+    color: 0xa7fff5,
+    shadowColor: 0x61d9d2,
+  },
+  {
+    key: "basinFalls",
+    label: "Basin Falls",
+    topX: 34.6,
+    topZ: -24.4,
+    baseX: 31.9,
+    baseZ: -21.6,
+    topOffset: 1.2,
+    baseOffset: 0.22,
+    width: 1.6,
+    poolRadius: 2.5,
+    color: 0xbff9ff,
+    shadowColor: 0x79d5d8,
+  },
+];
 
 function smoothstep(edge0, edge1, value) {
   const t = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
@@ -545,6 +577,151 @@ function createZoneParticles({ count, centerX, centerZ, radius, color, altColor,
   );
 }
 
+function createWaterfallFeature(definition) {
+  const top = new THREE.Vector3(
+    definition.topX,
+    getTerrainHeight(definition.topX, definition.topZ) + definition.topOffset,
+    definition.topZ,
+  );
+  const base = new THREE.Vector3(
+    definition.baseX,
+    getTerrainHeight(definition.baseX, definition.baseZ) + definition.baseOffset,
+    definition.baseZ,
+  );
+  const flow = new THREE.Vector3().subVectors(base, top);
+  const length = flow.length();
+  const direction = flow.clone().normalize();
+  const midpoint = top.clone().lerp(base, 0.5);
+
+  const group = new THREE.Group();
+  group.position.copy(midpoint);
+  group.quaternion.setFromUnitVectors(yAxis, direction);
+
+  const sheetMaterial = new THREE.MeshBasicMaterial({
+    color: definition.color,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const sheetMaterialCross = sheetMaterial.clone();
+  sheetMaterialCross.opacity = 0.22;
+  const coreMaterial = new THREE.MeshBasicMaterial({
+    color: 0xe5fffe,
+    transparent: true,
+    opacity: 0.44,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    fog: false,
+  });
+  const dropletMaterial = new THREE.MeshBasicMaterial({
+    color: 0xf2ffff,
+    transparent: true,
+    opacity: 0.56,
+    depthWrite: false,
+    fog: false,
+  });
+
+  const sheetGeometry = new THREE.PlaneGeometry(definition.width * 1.45, length, 1, 1);
+  const sheetA = new THREE.Mesh(sheetGeometry, sheetMaterial);
+  sheetA.rotation.y = Math.PI * 0.1;
+  group.add(sheetA);
+
+  const sheetB = new THREE.Mesh(sheetGeometry, sheetMaterialCross);
+  sheetB.rotation.y = Math.PI * 0.58;
+  group.add(sheetB);
+
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(definition.width * 0.16, definition.width * 0.3, length * 0.98, 6, 1, true),
+    coreMaterial,
+  );
+  group.add(core);
+
+  const droplets = [];
+  for (let index = 0; index < 8; index += 1) {
+    const droplet = new THREE.Mesh(
+      new THREE.OctahedronGeometry(definition.width * (0.13 + (index % 3) * 0.025), 0),
+      dropletMaterial,
+    );
+    droplet.userData = {
+      phase: index / 8,
+      speed: 0.45 + index * 0.04,
+      sway: (index % 2 === 0 ? 1 : -1) * (0.08 + (index % 3) * 0.015),
+    };
+    group.add(droplet);
+    droplets.push(droplet);
+  }
+
+  const crest = createWaterSurface(definition.width * 0.82, definition.color, 0.22);
+  crest.position.copy(top);
+  crest.position.y += 0.06;
+  crest.material.color.set(definition.color);
+
+  const pool = createWaterSurface(definition.poolRadius, 0x8ef3eb, 0.24);
+  pool.position.copy(base);
+  pool.position.y += 0.08;
+  pool.material.color.offsetHSL(0, 0, 0.04);
+
+  const foamRing = new THREE.Mesh(
+    new THREE.RingGeometry(definition.poolRadius * 0.54, definition.poolRadius * 0.92, 28),
+    new THREE.MeshBasicMaterial({
+      color: 0xf3fffb,
+      transparent: true,
+      opacity: 0.3,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      fog: false,
+    }),
+  );
+  foamRing.rotation.x = -Math.PI / 2;
+  foamRing.position.copy(base);
+  foamRing.position.y += 0.1;
+
+  const mist = createZoneParticles({
+    count: 24,
+    centerX: base.x,
+    centerZ: base.z,
+    radius: definition.poolRadius * 0.78,
+    color: definition.shadowColor,
+    altColor: 0xf0fffd,
+    minHeight: 0.3,
+    maxHeight: 2,
+    size: 0.14,
+  });
+  mist.material.opacity = 0.4;
+
+  return {
+    key: definition.key,
+    label: definition.label,
+    group,
+    top,
+    base,
+    length,
+    width: definition.width,
+    direction,
+    sheets: [sheetA, sheetB],
+    sheetMaterials: [sheetMaterial, sheetMaterialCross],
+    core,
+    coreMaterial,
+    droplets,
+    crest,
+    pool,
+    foamRing,
+    mist,
+    basin: {
+      key: definition.key,
+      label: definition.label,
+      x: base.x,
+      z: base.z,
+      y: base.y,
+      topY: top.y,
+      radius: definition.poolRadius,
+      safeRadius: definition.poolRadius * 1.28,
+    },
+  };
+}
+
 function createSunHalo() {
   const halo = new THREE.Group();
 
@@ -908,6 +1085,15 @@ export function buildWorld(scene) {
   shorelineWater.position.set(SHALLOWS_ZONE.x, ORIGIN_POOL.surfaceY + 0.18, SHALLOWS_ZONE.z);
   world.add(shorelineWater);
 
+  const waterfalls = WATERFALL_DEFS.map((definition) => createWaterfallFeature(definition));
+  waterfalls.forEach((waterfall) => {
+    world.add(waterfall.group);
+    world.add(waterfall.crest);
+    world.add(waterfall.pool);
+    world.add(waterfall.foamRing);
+    world.add(waterfall.mist);
+  });
+
   [
     [-35, 10, 1.1, 0.3],
     [-5, 23, 1.2, 1.1],
@@ -1245,6 +1431,9 @@ export function buildWorld(scene) {
 
   scene.add(world);
 
+  const zoneParticles = [nestMotes, originMotes, marshMotes, saltMotes, dangerEmbers, emberMotes];
+  waterfalls.forEach((waterfall) => zoneParticles.push(waterfall.mist));
+
   return {
     world,
     terrain,
@@ -1252,11 +1441,13 @@ export function buildWorld(scene) {
     dust,
     nestRing: nest.safeRing,
     dangerRing: dangerMarker.ring,
-    zoneParticles: [nestMotes, originMotes, marshMotes, saltMotes, dangerEmbers, emberMotes],
+    zoneParticles,
     waterSurfaces: [
       { mesh: deepLagoon, baseY: ORIGIN_POOL.surfaceY, drift: 0.06, scale: 0.02, phase: 0 },
       { mesh: shorelineWater, baseY: ORIGIN_POOL.surfaceY + 0.18, drift: 0.04, scale: 0.015, phase: 1.1 },
     ],
+    waterfalls,
+    waterfallBasins: waterfalls.map((waterfall) => waterfall.basin),
     sunHalo,
     skyClouds: cloudField.clouds,
     skyFlocks: [carrionFlock, highFlock],
