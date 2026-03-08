@@ -26,6 +26,17 @@ function smoothstep(edge0, edge1, value) {
   return t * t * (3 - 2 * t);
 }
 
+function radialPeak(x, z, centerX, centerZ, radius, height, sharpness = 1.75) {
+  const distance = Math.hypot(x - centerX, z - centerZ);
+  const t = Math.max(0, 1 - distance / radius);
+  return height * Math.pow(smoothstep(0, 1, t), sharpness);
+}
+
+function ridgeBand(distance, radius, halfWidth, height) {
+  const t = Math.max(0, 1 - Math.abs(distance - radius) / halfWidth);
+  return height * smoothstep(0, 1, t);
+}
+
 function resolvePoint(positionOrX, zValue) {
   if (typeof positionOrX === "object" && positionOrX != null) {
     return { x: positionOrX.x, z: positionOrX.z };
@@ -97,17 +108,35 @@ export function getTerrainHeight(x, z) {
 
   const dangerDistance = Math.hypot(x - DANGER_ZONE.x, z - DANGER_ZONE.z);
   const dangerFactor = Math.max(0, 1 - dangerDistance / (DANGER_ZONE.radius + 6));
-  const dangerBowl = -3.8 * smoothstep(0, 1, dangerFactor);
+  const dangerBowl = -4.7 * smoothstep(0, 1, dangerFactor);
+  const dangerRimBand = Math.max(0, 1 - Math.abs(dangerDistance - (DANGER_ZONE.radius - 4.2)) / 5.4);
+  const dangerRim = ridgeBand(dangerDistance, DANGER_ZONE.radius - 4.2, 5.4, 9.2);
+  const dangerTeeth = (0.58 + 0.42 * Math.sin(x * 0.31 + z * 0.14) * Math.cos(z * 0.18 - x * 0.08)) * 2.4 * smoothstep(0, 1, dangerRimBand);
+  const dangerNotch = radialPeak(x, z, DANGER_ZONE.x - 10.5, DANGER_ZONE.z + 6.5, 7.2, 5.8, 1.25);
+  const dangerMountains = Math.max(0, dangerRim + dangerTeeth - dangerNotch);
 
   const emberDistance = Math.hypot(x - EMBER_RIDGE_ZONE.x, z - EMBER_RIDGE_ZONE.z);
   const emberFactor = Math.max(0, 1 - emberDistance / (EMBER_RIDGE_ZONE.radius + 7));
-  const emberRise = 2.6 * smoothstep(0, 1, emberFactor);
-  const emberRidges = Math.sin(x * 0.24 - z * 0.1) * Math.cos(z * 0.12 + x * 0.05) * 0.58 * emberFactor;
+  const emberRise = 3.6 * smoothstep(0, 1, emberFactor);
+  const emberRidges = (0.62 + 0.38 * Math.sin(x * 0.24 - z * 0.1) * Math.cos(z * 0.12 + x * 0.05)) * 2.1 * emberFactor;
+  const emberPeakA = radialPeak(x, z, EMBER_RIDGE_ZONE.x + 1.5, EMBER_RIDGE_ZONE.z + 1.2, 12.6, 9.8, 1.6);
+  const emberPeakB = radialPeak(x, z, EMBER_RIDGE_ZONE.x + 8.2, EMBER_RIDGE_ZONE.z + 6.1, 8.6, 7.2, 1.8);
+  const emberPeakC = radialPeak(x, z, EMBER_RIDGE_ZONE.x - 7.2, EMBER_RIDGE_ZONE.z - 3.8, 7.8, 6.4, 1.8);
+  const emberSaddle = radialPeak(x, z, EMBER_RIDGE_ZONE.x - 1.8, EMBER_RIDGE_ZONE.z + 7.5, 10.5, 3.8, 1.3);
+  const emberMountains = emberPeakA + emberPeakB + emberPeakC + emberSaddle + emberRidges;
 
   const nestDistance = Math.hypot(x - NEST_POSITION.x, z - NEST_POSITION.z);
   const nestFactor = Math.max(0, 1 - nestDistance / (NEST_POSITION.radius + 5));
   const shorelineLift = smoothstep(-28, -8, x) * smoothstep(0, 1, 1 - Math.abs(z - 18) / 26) * 0.45;
-  const terrainWithBiomes = baseTerrain + originLagoon + shallowsShelf + marshFloor + marshHummocks + shorelineLift + emberRise + emberRidges;
+  const terrainWithBiomes = baseTerrain
+    + originLagoon
+    + shallowsShelf
+    + marshFloor
+    + marshHummocks
+    + shorelineLift
+    + emberRise
+    + emberMountains
+    + dangerMountains;
   const saltFlattened = THREE.MathUtils.lerp(terrainWithBiomes, saltPanTarget, smoothstep(0, 1, saltFactor));
   const nestShelf = THREE.MathUtils.lerp(saltFlattened, 0.7, smoothstep(0, 1, nestFactor));
 
@@ -148,6 +177,55 @@ function addRockCluster(group, x, z, scale, rotation = 0, tint = rockColor) {
   }
 
   group.add(cluster);
+}
+
+function addBasaltPeak(group, x, z, scale, rotation = 0, glow = false) {
+  const peak = new THREE.Group();
+  peak.position.set(x, getTerrainHeight(x, z), z);
+  peak.rotation.y = rotation;
+
+  const basaltMaterial = new THREE.MeshStandardMaterial({
+    color: glow ? 0x5f352f : 0x5a473f,
+    emissive: glow ? 0xff7d54 : 0x000000,
+    emissiveIntensity: glow ? 0.14 : 0,
+    flatShading: true,
+    roughness: 1,
+    metalness: 0.04,
+  });
+
+  const shardCount = 4;
+  for (let index = 0; index < shardCount; index += 1) {
+    const shard = new THREE.Mesh(
+      new THREE.ConeGeometry((0.9 + index * 0.2) * scale, (9 + index * 1.4) * scale, 6),
+      basaltMaterial,
+    );
+    shard.position.set(
+      (index - 1.5) * 1.2 * scale,
+      (4.6 + index * 0.55) * scale,
+      Math.sin(index * 1.7) * 1.1 * scale,
+    );
+    shard.rotation.set(index * 0.06, index * 0.65, (index - 1.5) * 0.08);
+    shard.castShadow = true;
+    shard.receiveShadow = true;
+    peak.add(shard);
+  }
+
+  const cap = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1.4 * scale, 0),
+    new THREE.MeshStandardMaterial({
+      color: glow ? 0x805245 : 0x6d574e,
+      emissive: glow ? 0xff9f6d : 0x000000,
+      emissiveIntensity: glow ? 0.12 : 0,
+      flatShading: true,
+      roughness: 0.96,
+    }),
+  );
+  cap.position.set(0.3 * scale, 10.4 * scale, -0.25 * scale);
+  cap.scale.set(1.15, 0.92, 1.05);
+  cap.castShadow = true;
+  peak.add(cap);
+
+  group.add(peak);
 }
 
 function addBoneRibs(group, x, z, scale, rotation) {
@@ -716,6 +794,8 @@ export function buildWorld(scene) {
 
     const dangerBlend = Math.max(0, 1 - Math.hypot(x - DANGER_ZONE.x, z - DANGER_ZONE.z) / (DANGER_ZONE.radius + 8));
     tempColor.lerp(new THREE.Color(0xaa6342), dangerBlend * 0.38);
+    const highlandBlend = smoothstep(4, 15, y);
+    tempColor.lerp(new THREE.Color(0x7d6656), highlandBlend * 0.28);
 
     colorValues.push(tempColor.r, tempColor.g, tempColor.b);
   }
@@ -785,6 +865,13 @@ export function buildWorld(scene) {
     [35, 31, 1.15, 0.4, 0x5b3b34],
     [40, 20, 0.92, 2.3, 0x74493d],
   ].forEach(([x, z, scale, rotation, tint]) => addRockCluster(world, x, z, scale, rotation, tint));
+
+  [
+    [24, -11, 1.2, 0.2, true],
+    [33, -23, 1.45, 1.4, true],
+    [29, 24, 1.35, 0.8, true],
+    [37, 31, 1.6, 1.9, true],
+  ].forEach(([x, z, scale, rotation, glow]) => addBasaltPeak(world, x, z, scale, rotation, glow));
 
   [
     [-39, 27, 0.8],

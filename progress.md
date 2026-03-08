@@ -725,3 +725,35 @@ Additional biome pass:
     - `Ember Ridge` stays locked below threshold, then unlocks at either `26 XP` or `Jaw Basin mastery 14`
     - `Salt Flats` now hosts new nearby food nodes at roughly `(-32, -18)`, `(-36, -26)`, and `(-24, -31)`
     - `Ember Ridge` now hosts new nearby food nodes at roughly `(24, 30)`, `(31, 34)`, and `(38, 25)`
+
+## 2026-03-07 Mountain Elevation + Fall Damage Pass
+
+- Current request:
+  - make some biomes feel mountainous with serious elevation and add fall damage so height matters in moment-to-moment play
+- Implemented:
+  - reworked biome terrain shaping in `src/game/world.js` so `Jaw Basin` now has crater-rim mountains, sharper teeth, deeper bowls, and real cliff transitions instead of only soft dunes
+  - raised `Ember Ridge` into a more dramatic basalt range with multiple peak clusters, saddles, and hotter elevated silhouettes
+  - added basalt-peak landmark props in the ridge so the height reads visually from gameplay cameras, not only in the heightfield
+  - pushed altitude tinting into terrain colors so high ground reads as harsher stone and stands apart from low sand
+  - updated biome summaries/objective copy in `src/game/config.js` and `src/game/SporeSliceGame.js` so the game explicitly teaches that these areas include punishing drops
+  - added ledge-fall handling in `src/game/SporeSliceGame.js` so the player no longer snaps cleanly onto steep terrain when crossing a real drop
+  - tracked airborne peak, landing speed, and fall damage in player state plus `render_game_to_text()` for deterministic testing
+  - added fall-damage resolution tuned by impact speed and drop distance, with custom damage feedback and reduced fall-only invulnerability timing
+- Validation:
+  - `npm run build` passes after the mountain/fall pass
+  - required standalone `$WEB_GAME_CLIENT` run completed:
+    - `output/web-game/mountain-fall-pass-1/shot-0.png`
+    - `output/web-game/mountain-fall-pass-1/state-0.json`
+  - saved visual mountain capture:
+    - `output/web-game/mountain-fall-pass-1/ember-mountain.png`
+  - visual inspection:
+    - confirmed the saved Ember Ridge shot shows a tall basalt spire cluster with meaningful vertical scale in gameplay view
+    - the generic autostart smoke shot still spawns near a pre-existing occluding rock in Origin Waters; this predates the task and was not changed here
+  - deterministic terrain and combat checks:
+    - sampled `Ember Ridge` peaks reach about `y 10.08`
+    - sampled `Jaw Basin` rim peaks reach about `y 12.91`
+    - steepest observed adjacent crater drop was about `9.48` world units over `3.28` horizontal units
+    - forcing a player traverse off the high Jaw Basin rim produced a real airborne fall and landing speed about `19.09`
+    - that landing reduced health from `120` to `51`, applying `69` fall damage with message `The landing hammers you for 69. High ground is faster than falling bodies.`
+  - browser console review:
+    - no new console errors beyond the React DevTools info banner

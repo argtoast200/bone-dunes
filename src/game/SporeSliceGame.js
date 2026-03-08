@@ -39,6 +39,12 @@ const ATTACK_DURATION = ATTACK_WINDUP_DURATION + ATTACK_STRIKE_DURATION + ATTACK
 const ATTACK_LUNGE_DURATION = 0.18;
 const ATTACK_LUNGE_SPEED = 10.8;
 const JUMP_GRAVITY = 24;
+const GROUND_SNAP_DISTANCE = 0.78;
+const FALL_START_PULL = 2.6;
+const FALL_DAMAGE_SAFE_SPEED = 10.5;
+const FALL_DAMAGE_MIN_DROP = 2.8;
+const FALL_DAMAGE_SCALE = 6.25;
+const FALL_DAMAGE_DROP_SCALE = 3.2;
 const MOVE_TARGET_STOP_DISTANCE = 1.25;
 const MOVE_TARGET_SLOW_DISTANCE = 5.8;
 const CAMERA_SIDE_OFFSET = 1.35;
@@ -1685,6 +1691,7 @@ export class SporeSliceGame {
       previousVelocity: new THREE.Vector3(),
       verticalVelocity: 0,
       jumpOffset: 0,
+      airbornePeakY: getTerrainHeight(NEST_POSITION.x, NEST_POSITION.z) + PLAYER_HEIGHT,
       yaw: Math.PI,
       health: this.playerStats.health,
       maxHealth: this.playerStats.health,
@@ -1714,6 +1721,8 @@ export class SporeSliceGame {
       socialTimer: 0,
       socialVerb: null,
       socialSuccess: 0,
+      lastFallDamage: 0,
+      lastLandingSpeed: 0,
       lean: 0,
       bank: 0,
       turnMomentum: 0,
@@ -4058,6 +4067,8 @@ export class SporeSliceGame {
           mass: Number(this.playerStats.mass.toFixed(2)),
           airborne: this.player.isAirborne,
           jumpHeight: Number(this.player.jumpOffset.toFixed(2)),
+          lastFallDamage: this.player.lastFallDamage,
+          lastLandingSpeed: Number(this.player.lastLandingSpeed.toFixed(2)),
           attackImpact: Number(this.player.attackImpact.toFixed(2)),
           pathLabel: activePath.label,
           shoreLabel: activePath.shoreLabel,
@@ -4377,6 +4388,7 @@ export class SporeSliceGame {
     this.player.previousVelocity.set(0, 0, 0);
     this.player.verticalVelocity = 0;
     this.player.jumpOffset = 0;
+    this.player.airbornePeakY = spawnY;
     this.player.yaw = spawnTarget.yaw;
     this.player.health = this.playerStats.health;
     this.player.maxHealth = this.playerStats.health;
@@ -4409,6 +4421,8 @@ export class SporeSliceGame {
     this.player.socialTimer = 0;
     this.player.socialVerb = null;
     this.player.socialSuccess = 0;
+    this.player.lastFallDamage = 0;
+    this.player.lastLandingSpeed = 0;
     this.state.editorOpen = false;
     this.clearSocialEncounter();
     this.clearFeralSurge();
@@ -4563,14 +4577,15 @@ export class SporeSliceGame {
     return true;
   }
 
-  damagePlayer(amount, sourceDirection) {
+  damagePlayer(amount, sourceDirection, options = {}) {
     if (this.player.invulnerability > 0 || this.state.respawnTimer > 0) {
-      return;
+      return 0;
     }
 
+    const sourceKind = options.kind ?? "attack";
     const finalDamage = amount * (1 - this.playerStats.defense);
     this.player.health = Math.max(0, this.player.health - finalDamage);
-    this.player.invulnerability = 0.65;
+    this.player.invulnerability = sourceKind === "fall" ? 0.42 : 0.65;
     this.player.hurtTint = 0.9;
     if (this.player.attackPhase === "windup" || this.player.attackPhase === "strike") {
       this.player.attackPhase = "recovery";
@@ -4582,24 +4597,36 @@ export class SporeSliceGame {
     this.player.attackRecoil = Math.max(this.player.attackRecoil, this.player.health > 0 ? 0.56 : 0.9);
     this.player.attackImpact = Math.max(this.player.attackImpact, this.player.health > 0 ? 0.5 : 0.78);
     this.player.moveVelocity.multiplyScalar(0.38);
-    this.player.impulseVelocity.addScaledVector(sourceDirection, 6.2 / Math.max(0.85, this.playerStats.impactResist));
+    if (sourceDirection?.lengthSq?.() > 0.0001) {
+      this.player.impulseVelocity.addScaledVector(sourceDirection, 6.2 / Math.max(0.85, this.playerStats.impactResist));
+    }
     this.setImpactPause(this.player.health > 0 ? 0.08 : 0.12, this.player.health > 0 ? 2.6 : 4.8);
-    this.cameraShake = Math.max(this.cameraShake, this.player.health > 0 ? 0.18 : 0.34);
+    this.cameraShake = Math.max(this.cameraShake, this.player.health > 0 ? (sourceKind === "fall" ? 0.22 : 0.18) : 0.34);
     this.spawnBurst(this.player.group.position, {
-      color: this.player.health > 0 ? 0xff8b72 : 0xff4f3a,
+      color: sourceKind === "fall"
+        ? this.player.health > 0 ? 0xffc07d : 0xff7f57
+        : this.player.health > 0 ? 0xff8b72 : 0xff4f3a,
       ttl: this.player.health > 0 ? 0.45 : 0.65,
       size: this.player.health > 0 ? 1.2 : 1.8,
       shards: this.player.health > 0 ? 7 : 10,
     });
     this.spawnGroundDust(this.player.group.position, {
-      color: this.player.health > 0 ? 0xd88f68 : 0xb76c52,
+      color: sourceKind === "fall"
+        ? this.player.health > 0 ? 0xc8a178 : 0xa66c54
+        : this.player.health > 0 ? 0xd88f68 : 0xb76c52,
       ttl: this.player.health > 0 ? 0.18 : 0.26,
       size: this.player.health > 0 ? 0.88 : 1.18,
       shards: this.player.health > 0 ? 4 : 6,
     });
-    this.state.message = this.player.health > 0
-      ? "A creature tears into you. Fall back or finish the fight."
-      : "You collapse in the dunes.";
+    if (sourceKind === "fall") {
+      this.state.message = this.player.health > 0
+        ? `The landing hammers you for ${Math.round(finalDamage)}. High ground is faster than falling bodies.`
+        : "The drop crushes this body.";
+    } else {
+      this.state.message = this.player.health > 0
+        ? "A creature tears into you. Fall back or finish the fight."
+        : "You collapse in the dunes.";
+    }
 
     if (this.player.health <= 0) {
       this.state.respawnTimer = 2.3;
@@ -4614,6 +4641,7 @@ export class SporeSliceGame {
         ? `You lose ${dnaLoss} DNA and reform at the nest.`
         : "You reform at the nest.";
     }
+    return finalDamage;
   }
 
   damageEnemy(enemy, amount, sourceDirection, options = {}) {
@@ -4809,6 +4837,8 @@ export class SporeSliceGame {
     this.player.verticalVelocity = this.playerStats.jumpVelocity * (this.player.terrain.water ? 0.92 : 1);
     this.player.jumpOffset = Math.max(this.player.jumpOffset, 0.04);
     this.player.isAirborne = true;
+    this.player.airbornePeakY = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT + this.player.jumpOffset;
+    this.player.lastFallDamage = 0;
     this.player.attackImpact = Math.max(this.player.attackImpact, 0.18);
     this.cameraFovKick = Math.max(this.cameraFovKick, 0.65);
     this.cameraShake = Math.max(this.cameraShake, 0.04);
@@ -4820,6 +4850,19 @@ export class SporeSliceGame {
       rise: this.player.terrain.water ? 0.09 : 0.06,
     });
     return true;
+  }
+
+  applyFallDamage(impactSpeed, dropDistance) {
+    this.player.lastLandingSpeed = impactSpeed;
+    if (dropDistance < FALL_DAMAGE_MIN_DROP || impactSpeed <= FALL_DAMAGE_SAFE_SPEED) {
+      this.player.lastFallDamage = 0;
+      return 0;
+    }
+
+    const baseDamage = (impactSpeed - FALL_DAMAGE_SAFE_SPEED) * FALL_DAMAGE_SCALE + Math.max(0, dropDistance - FALL_DAMAGE_MIN_DROP) * FALL_DAMAGE_DROP_SCALE;
+    const finalDamage = this.damagePlayer(clamp(baseDamage, 6, 92), vectorA.set(0, 0, 0), { kind: "fall" });
+    this.player.lastFallDamage = Math.round(finalDamage);
+    return finalDamage;
   }
 
   resolvePlayerAttack() {
@@ -4999,7 +5042,7 @@ export class SporeSliceGame {
 
     playerPosition.x = clamp(playerPosition.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
     playerPosition.z = clamp(playerPosition.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
-    playerPosition.y = getTerrainHeight(playerPosition.x, playerPosition.z) + PLAYER_HEIGHT + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
+    playerPosition.y = getTerrainHeight(playerPosition.x, playerPosition.z) + PLAYER_HEIGHT + this.player.jumpOffset + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
   }
 
   updateFood(dt) {
@@ -5795,6 +5838,7 @@ export class SporeSliceGame {
       : this.player.velocity.lengthSq() > 0.001
         ? vectorF.copy(this.player.velocity).setY(0).normalize()
         : vectorF.set(0, 0, 0);
+    const previousGroundHeight = getTerrainHeight(this.player.group.position.x, this.player.group.position.z) + PLAYER_HEIGHT;
     const terrainBiome = this.getCurrentBiome(this.player.group.position);
     const activeCreature = this.getActiveCreature();
     const pathProfile = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
@@ -5844,7 +5888,7 @@ export class SporeSliceGame {
       this.input.jumpQueued = false;
     }
     const wasAirborne = this.player.isAirborne || this.player.jumpOffset > 0.001 || this.player.verticalVelocity > 0.001;
-    const airborne = !this.isPlayerGrounded();
+    let airborne = !this.isPlayerGrounded();
     const airControlFactor = airborne ? this.playerStats.airControl : 1;
     if (sprinting) {
       this.player.sprintCharge = Math.max(0, this.player.sprintCharge - dt * SPRINT_DRAIN_RATE * pathSprintDrain * (1 + shorelineStrain * 0.44));
@@ -5911,13 +5955,27 @@ export class SporeSliceGame {
     this.player.group.position.x = clamp(this.player.group.position.x, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
     this.player.group.position.z = clamp(this.player.group.position.z, -WORLD_RADIUS + 2, WORLD_RADIUS - 2);
     const terrainHeight = getTerrainHeight(this.player.group.position.x, this.player.group.position.z);
+    const groundHeight = terrainHeight + PLAYER_HEIGHT;
+    const groundDelta = previousGroundHeight - groundHeight;
+    const previousAirY = previousGroundHeight + this.player.jumpOffset;
+    if (!airborne && groundDelta > GROUND_SNAP_DISTANCE) {
+      airborne = true;
+      this.player.isAirborne = true;
+      this.player.airbornePeakY = Math.max(this.player.airbornePeakY, previousAirY);
+      this.player.verticalVelocity = Math.min(this.player.verticalVelocity, -Math.min(FALL_START_PULL, groundDelta * 0.9));
+    }
     if (airborne) {
       this.player.verticalVelocity -= JUMP_GRAVITY * (terrainBiome.water ? 0.88 : 1) * dt;
-      this.player.jumpOffset += this.player.verticalVelocity * dt;
-      if (this.player.jumpOffset <= 0) {
+      this.player.jumpOffset += this.player.verticalVelocity * dt + groundDelta;
+      this.player.airbornePeakY = Math.max(this.player.airbornePeakY, groundHeight + this.player.jumpOffset);
+      if (this.player.jumpOffset <= 0 && this.player.verticalVelocity <= 0) {
+        const landingSpeed = Math.max(0, -this.player.verticalVelocity);
+        const dropDistance = Math.max(0, this.player.airbornePeakY - groundHeight);
         this.player.jumpOffset = 0;
         this.player.verticalVelocity = 0;
         this.player.isAirborne = false;
+        this.player.airbornePeakY = groundHeight;
+        this.applyFallDamage(landingSpeed, dropDistance);
         if (wasAirborne) {
           this.player.attackImpact = Math.max(this.player.attackImpact, 0.24);
           this.cameraShake = Math.max(this.cameraShake, terrainBiome.water ? 0.04 : 0.07);
@@ -5937,8 +5995,9 @@ export class SporeSliceGame {
       this.player.verticalVelocity = 0;
       this.player.jumpOffset = 0;
       this.player.isAirborne = false;
+      this.player.airbornePeakY = groundHeight;
     }
-    this.player.group.position.y = terrainHeight + PLAYER_HEIGHT + this.player.jumpOffset + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
+    this.player.group.position.y = groundHeight + this.player.jumpOffset + this.player.attackRecoil * 0.14 + this.surge.pulse * 0.05;
     this.player.group.rotation.y = this.player.yaw;
     this.player.lean = damp(
       this.player.lean,
@@ -6085,7 +6144,7 @@ export class SporeSliceGame {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
       this.state.objective = "Species nest: heal, spend DNA, lay an egg, then send the newborn back through the origin waters.";
     } else if (this.state.zone === "danger") {
-      this.state.objective = "Jaw Basin: richer DNA and harder fights. Master it to turn the species into a war line.";
+      this.state.objective = "Jaw Basin: richer DNA, crater walls, and harder fights. Master it without feeding the drop.";
     } else if (!activeFrontier) {
       this.state.objective = `${currentBiome.label} is still a hard frontier. Grow the species or return to the nest before claiming it.`;
     } else if (!currentBiome.water && shoreReadiness < SHORE_READY_THRESHOLD) {
@@ -6099,7 +6158,7 @@ export class SporeSliceGame {
     } else if (currentBiome.key === "saltFlats") {
       this.state.objective = `${activePath.label}: Salt Flats reward bodies that can keep traction and survive long exposed sprints.`;
     } else if (currentBiome.key === "emberRidge") {
-      this.state.objective = `${activePath.label}: Ember Ridge rewards heavy bodies that can climb hard ground and win short violent fights.`;
+      this.state.objective = `${activePath.label}: Ember Ridge rewards heavy bodies that can climb hard ground, leap gaps, and survive brutal descents.`;
     } else {
       this.state.objective = `${activePath.label}: Bone Dunes reward bodies that can hold speed and survive long exposed hunts.`;
     }
