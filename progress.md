@@ -45,6 +45,25 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
   - kept enemy count modest instead of adding more factions
   - kept progression to a few high-payoff hooks rather than building a large tech tree
 
+## 2026-03-07 Jump + Xbox A Mapping Pass
+
+- Current request: add a real jump and map it to the Xbox `A` button without breaking the existing controller/menu flow.
+- Implemented:
+  - added grounded jump state to the existing player controller with vertical velocity, jump offset, landing dust, and lightweight airborne animation posing
+  - remapped gameplay controller input so `A` jumps, while `X`, `RB`, and `RT` handle bite
+  - preserved overlay/menu confirmation by separating gameplay jump input from menu confirm input, so `A` still confirms focused menu actions when an overlay is open
+  - exposed jump state in `render_game_to_text()` for deterministic browser validation (`vy`, `airborne`, `jumpHeight`, and gamepad jump state)
+  - updated live controller copy in the HUD/menu text to match the new mapping
+- Validation:
+  - `npm run build` passes
+  - web-game client smoke capture saved to `output/web-game/jump-pass-1/shot-0.png` with state in `output/web-game/jump-pass-1/state-0.json`
+  - visual inspection: a mid-jump browser screenshot was captured at `output/web-game/jump-pass-1/mid-jump.png`; the creature now visibly lifts and lands instead of staying glued to the ground plane
+  - deterministic browser checks confirmed:
+    - `A` in gameplay raises `vy` to about `5.99`, peaks around `jumpHeight 0.96`, then lands back to `jumpHeight 0`
+    - `A` still confirms overlays by starting the run from the menu
+    - controller bite still lands on both `X` and `RT`, dealing `22`
+    - no browser console errors beyond the React DevTools info banner
+
 ## 2026-03-06 Feel Pass 2
 
 - Current request: do one more polish pass focused on feel, visual atmosphere, addictiveness, and heavier attacks/combat.
