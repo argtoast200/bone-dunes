@@ -612,3 +612,59 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
 - Scope protected:
   - no extra biomes, no freeform procedural editor, no new combat tree
   - the pass stayed focused on making the same map feel more like different habitats for different bodies
+
+Evolution body-plan pass:
+- Goal:
+  - deepen the existing Creature Evolution loop so the player can spend DNA on longer legs, arms, tails, and wings with visible body changes plus clear benefits and drawbacks
+- Implemented:
+  - extended `src/game/config.js` with two new modular evolution traits:
+    - `Raking Arms`
+    - `Glider Wings`
+  - upgraded the locomotion family so it now reads as a real body-plan branch instead of scattered stat perks:
+    - `Longstride Legs`
+    - `Raking Arms`
+    - `Long Whiptail`
+    - `Glider Wings`
+  - made `tail` a starter blueprint so new lines can meaningfully branch their body plan from the nest instead of waiting on a combat unlock
+  - added explicit drawback copy on the evolution cards in `src/game/GameApp.jsx` / `src/index.css`, so the menu now explains the cost of each shape change instead of only listing upside
+  - extended the modular creature model in `src/game/SporeSliceGame.js` with:
+    - visible forelimbs
+    - visible wing-fins
+    - stronger tail scaling
+    - updated body proportions as traits grow
+  - threaded the new traits through save migration in `src/game/save.js`
+  - updated the stat model so each body-plan trait pushes the creature in a different direction:
+    - `Longstride Legs`: more speed and chase control, but lighter body shove
+    - `Raking Arms`: more bite pressure / body checks, but slower sprint speed
+    - `Long Whiptail`: more knockback and follow-through, but softer launch
+    - `Glider Wings`: more speed / turn / glide identity, but less toughness and shove
+  - updated path scoring so body-plan choices now pull the next egg toward different archetypes:
+    - `Longstride Legs` -> `Dune Runner`
+    - `Long Whiptail` / `Glider Wings` -> `Water Glider`
+    - `Raking Arms` -> heavier ambush / bruiser tendencies
+- Validation:
+  - `npm run build` passes after the evolution body-plan pass
+  - required standalone `$WEB_GAME_CLIENT` run completed with explicit skill-script path:
+    - `output/web-game/evolution-bodyplan-pass/shot-0.png`
+    - `output/web-game/evolution-bodyplan-pass/state-0.json`
+  - saved Playwright editor capture:
+    - `output/web-game/evolution-bodyplan-pass/editor-playwright.png`
+  - visual inspection:
+    - confirmed the evolution editor now presents a dedicated `Body Plan` section with `Longstride Legs`, `Raking Arms`, `Long Whiptail`, and `Glider Wings`
+    - confirmed each locomotion card shows both its benefit text and a dedicated drawback line
+    - confirmed the layout still reads cleanly without turning back into a dashboard
+  - deterministic browser checks:
+    - `Longstride Legs` preview changes the next egg to `Dune Runner`, raises speed from `11.5` to `12.7`, and increases growth time from `29` to `42`
+    - `Raking Arms` preview raises bite from `22` to `24`, drops speed from `11.5` to `11.2`, and increases growth time from `29` to `42`
+    - `Long Whiptail` preview changes the next egg to `Water Glider`, keeps bite flat, slightly softens top speed (`11.5` -> `11.3`), and increases growth time from `29` to `42`
+    - `Glider Wings` preview changes the next egg to `Water Glider`, raises speed from `11.5` to `12.0`, lowers toughness from `120` to `115`, and increases growth time from `29` to `42`
+    - forcing all four body-plan traits onto the active creature correctly exposed the new model parts:
+      - forelimbs visible
+      - wing-fins visible
+      - tail blade visible
+      - leg stretch scale reached about `1.14`
+    - the resulting live body retained the intended tradeoff profile:
+      - speed about `12.59`
+      - health `115`
+      - body push about `4.64`
+      - turn rate about `9.77`

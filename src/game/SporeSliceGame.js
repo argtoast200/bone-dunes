@@ -128,7 +128,7 @@ const SPECIES_PATH_DEFS = {
     key: "waterGlider",
     label: "Water Glider",
     shortLabel: "Glider",
-    summary: "Tail-and-crest bodies carve clean lines through water and hug the shoreline with speed.",
+    summary: "Tail-and-wing bodies carve clean lines through water and hug the shoreline with speed.",
     favoredBiomes: ["Origin Waters", "Sunlit Shallows"],
     biomeSpeed: { originWaters: 1.14, sunlitShallows: 1.11, glowMarsh: 1, boneDunes: 0.9, jawBasin: 0.88 },
     biomeTraction: { originWaters: 1.1, sunlitShallows: 1.08, glowMarsh: 1.02, boneDunes: 0.92, jawBasin: 0.9 },
@@ -140,7 +140,7 @@ const SPECIES_PATH_DEFS = {
     key: "marshAmbusher",
     label: "Marsh Ambusher",
     shortLabel: "Ambusher",
-    summary: "Glow-and-spike bodies sit deep in soft ground, then explode into close-range strikes.",
+    summary: "Glow-and-arm bodies sit deep in soft ground, then explode into close-range strikes.",
     favoredBiomes: ["Glow Marsh", "Sunlit Shallows"],
     biomeSpeed: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 1.08, boneDunes: 0.97, jawBasin: 0.96 },
     biomeTraction: { originWaters: 1, sunlitShallows: 1.02, glowMarsh: 1.18, boneDunes: 0.96, jawBasin: 1.01 },
@@ -164,7 +164,7 @@ const SPECIES_PATH_DEFS = {
     key: "basinBruiser",
     label: "Basin Bruiser",
     shortLabel: "Bruiser",
-    summary: "Jaw-and-horn frames absorb punishment, push bodies around, and own hard ground.",
+    summary: "Jaw-and-arm frames absorb punishment, push bodies around, and own hard ground.",
     favoredBiomes: ["Jaw Basin", "Bone Dunes"],
     biomeSpeed: { originWaters: 0.86, sunlitShallows: 0.92, glowMarsh: 0.97, boneDunes: 1, jawBasin: 1.06 },
     biomeTraction: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 1.02, boneDunes: 1.05, jawBasin: 1.12 },
@@ -189,6 +189,8 @@ const TRAIT_TITLES = {
   crest: "Suncrest",
   tail: "Whiptail",
   legs: "Longstride",
+  arms: "Rakeclaw",
+  wings: "Skyfin",
   spikes: "Spikehide",
   glow: "Glowstripe",
 };
@@ -208,6 +210,13 @@ function damp(current, target, smoothing, dt) {
 function dampVector(current, target, smoothing, dt) {
   const factor = 1 - Math.exp(-smoothing * dt);
   current.lerp(target, factor);
+}
+
+function resolveTraits(rawTraits = {}) {
+  return UPGRADE_DEFS.reduce((traits, upgrade) => {
+    traits[upgrade.key] = Number.isFinite(rawTraits?.[upgrade.key]) ? rawTraits[upgrade.key] : 0;
+    return traits;
+  }, {});
 }
 
 function moveVectorToward(current, target, maxDelta, workVector) {
@@ -383,6 +392,33 @@ function makeCreatureModel({
   eyeRight.position.x *= -1;
   headPivot.add(eyeRight);
 
+  const armPivots = [];
+  const armMeshes = [];
+  const clawMeshes = [];
+  [-1, 1].forEach((sign, index) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(sign * 1.04 * scale, -0.02 * scale, 1.04 * scale);
+
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.14 * scale, 0.19 * scale, 1 * scale, 5), skinMaterial);
+    arm.position.set(sign * 0.18 * scale, -0.4 * scale, 0.12 * scale);
+    arm.rotation.z = sign * 0.56;
+    arm.rotation.x = 0.18;
+    arm.castShadow = true;
+    pivot.add(arm);
+
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.12 * scale, 0.42 * scale, 4), accentMaterial);
+    claw.position.set(sign * 0.42 * scale, -0.84 * scale, 0.34 * scale);
+    claw.rotation.z = sign * 0.72;
+    claw.rotation.x = Math.PI * 0.38;
+    claw.castShadow = true;
+    pivot.add(claw);
+
+    armPivots[index] = pivot;
+    armMeshes[index] = arm;
+    clawMeshes[index] = claw;
+    group.add(pivot);
+  });
+
   const tailGroup = new THREE.Group();
   tailGroup.position.set(0, 0.2 * scale, -2.1 * scale);
   group.add(tailGroup);
@@ -405,6 +441,33 @@ function makeCreatureModel({
     crestGroup.add(frill);
   }
   group.add(crestGroup);
+
+  const wingGroup = new THREE.Group();
+  const wingPanels = [];
+  const wingSpars = [];
+  [-1, 1].forEach((sign, index) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(sign * 1.02 * scale, 0.36 * scale, -0.08 * scale);
+
+    const spar = new THREE.Mesh(new THREE.CylinderGeometry(0.05 * scale, 0.07 * scale, 1.24 * scale, 4), accentMaterial);
+    spar.position.set(sign * 0.12 * scale, 0.05 * scale, -0.08 * scale);
+    spar.rotation.z = sign * 0.86;
+    spar.rotation.x = Math.PI * 0.48;
+    spar.castShadow = true;
+    pivot.add(spar);
+
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.08 * scale, 0.76 * scale, 1.5 * scale), markingMaterial);
+    panel.position.set(sign * 0.22 * scale, 0.08 * scale, -0.18 * scale);
+    panel.rotation.z = sign * 0.5;
+    panel.rotation.x = Math.PI * 0.08;
+    panel.rotation.y = sign * 0.18;
+    pivot.add(panel);
+
+    wingPanels[index] = panel;
+    wingSpars[index] = spar;
+    wingGroup.add(pivot);
+  });
+  group.add(wingGroup);
 
   const spikeGroup = new THREE.Group();
   const spikes = [];
@@ -510,7 +573,13 @@ function makeCreatureModel({
       hornGroup,
       hornLeft,
       hornRight,
+      armPivots,
+      armMeshes,
+      clawMeshes,
       crestGroup,
+      wingGroup,
+      wingPanels,
+      wingSpars,
       spikeGroup,
       spikes,
       markingsGroup,
@@ -555,6 +624,7 @@ function createFoodMesh(rare = false) {
 
 function createEnemy(type) {
   const spec = ENEMY_DEFS[type];
+  const traits = resolveTraits(spec.traits);
   const profile = {
     bodyHue: 0,
     accentHue: 0,
@@ -575,7 +645,7 @@ function createEnemy(type) {
     type: spec.family,
     variant: type,
     spec,
-    traits: { ...spec.traits },
+    traits,
     profile,
     baseScale: profile.size,
     baseBackGlow: 0.08,
@@ -604,7 +674,7 @@ function createEnemy(type) {
     recoilTilt: 0,
     socialPulse: 0,
   };
-  applyCreatureAppearance(enemy, enemy.traits, enemy.profile, {
+  applyCreatureAppearance(enemy, traits, enemy.profile, {
     body: spec.color,
     accent: spec.accent,
     markings: spec.accent,
@@ -621,11 +691,12 @@ function getTraitLevels(saveData) {
 }
 
 function computeSpeciesPath(upgrades, profile = null) {
+  const traits = resolveTraits(upgrades);
   const scores = {
-    waterGlider: upgrades.tail * 1.12 + upgrades.crest * 0.94 + upgrades.glow * 0.18 - upgrades.spikes * 0.12,
-    marshAmbusher: upgrades.glow * 1.02 + upgrades.spikes * 0.86 + upgrades.crest * 0.22 + upgrades.jaw * 0.16,
-    duneRunner: upgrades.legs * 1.08 + upgrades.tail * 0.68 + upgrades.jaw * 0.14 - upgrades.spikes * 0.08,
-    basinBruiser: upgrades.jaw * 0.96 + upgrades.horns * 0.92 + upgrades.spikes * 0.84 + upgrades.tail * 0.12,
+    waterGlider: traits.tail * 0.94 + traits.crest * 0.82 + traits.wings * 1.2 + traits.glow * 0.18 - traits.spikes * 0.12,
+    marshAmbusher: traits.glow * 1.02 + traits.spikes * 0.76 + traits.arms * 0.72 + traits.crest * 0.24 + traits.jaw * 0.16,
+    duneRunner: traits.legs * 1.12 + traits.tail * 0.66 + traits.wings * 0.42 + traits.jaw * 0.14 - traits.spikes * 0.08 - traits.arms * 0.04,
+    basinBruiser: traits.jaw * 0.96 + traits.horns * 0.92 + traits.spikes * 0.84 + traits.arms * 0.88 + traits.tail * 0.12 - traits.wings * 0.08,
   };
   const winner = Object.entries(scores).sort((left, right) => right[1] - left[1])[0];
   const winnerKey = winner && winner[1] >= 0.9 ? winner[0] : "nestling";
@@ -633,10 +704,12 @@ function computeSpeciesPath(upgrades, profile = null) {
   const size = profile?.size ?? 1;
   const shoreReadiness = clamp(
     0.18
-      + upgrades.legs * 0.22
-      + upgrades.tail * 0.13
-      + upgrades.spikes * 0.07
-      + upgrades.horns * 0.04
+      + traits.legs * 0.22
+      + traits.tail * 0.12
+      + traits.arms * 0.09
+      + traits.wings * 0.14
+      + traits.spikes * 0.07
+      + traits.horns * 0.04
       + Math.max(0, size - 0.94) * 0.18
       + (winnerKey === "duneRunner" ? 0.08 : winnerKey === "basinBruiser" ? 0.06 : winnerKey === "waterGlider" ? -0.03 : 0),
     0.12,
@@ -666,34 +739,43 @@ function computeSpeciesPath(upgrades, profile = null) {
 }
 
 function computePlayerStats(upgrades, profile = null) {
+  const traits = resolveTraits(upgrades);
   const size = profile?.size ?? 1;
   const mass = clamp(
-    1 + (size - 1) * 1.4 + upgrades.spikes * 0.15 + upgrades.jaw * 0.08 + upgrades.horns * 0.05 - upgrades.legs * 0.06,
-    0.84,
-    1.7,
+    1
+      + (size - 1) * 1.4
+      + traits.spikes * 0.15
+      + traits.jaw * 0.08
+      + traits.horns * 0.05
+      + traits.arms * 0.08
+      + traits.tail * 0.04
+      - traits.legs * 0.06
+      - traits.wings * 0.09,
+    0.8,
+    1.8,
   );
   const momentumScale = Math.pow(mass, 0.72);
-  const path = computeSpeciesPath(upgrades, profile);
+  const path = computeSpeciesPath(traits, profile);
   return {
-    speed: PLAYER_BASE_STATS.speed * (1 + upgrades.legs * 0.1),
-    health: PLAYER_BASE_STATS.health + upgrades.spikes * 16,
-    biteDamage: PLAYER_BASE_STATS.biteDamage + upgrades.jaw * 7 + upgrades.horns * 4,
-    biteCooldown: PLAYER_BASE_STATS.biteCooldown * (1 - upgrades.glow * 0.08),
-    knockback: PLAYER_BASE_STATS.knockback * (1 + upgrades.tail * 0.18),
-    defense: clamp(PLAYER_BASE_STATS.defense + upgrades.spikes * 0.09, 0, 0.3),
-    intimidation: PLAYER_BASE_STATS.intimidation + upgrades.horns * 0.12 + upgrades.crest * 0.18,
-    attackReach: 4.35 + upgrades.jaw * 0.28 + upgrades.horns * 0.18,
-    lungeSpeed: ATTACK_LUNGE_SPEED * (1 + upgrades.legs * 0.04 + upgrades.jaw * 0.03 + upgrades.tail * 0.04) / Math.pow(mass, 0.08),
+    speed: PLAYER_BASE_STATS.speed * (1 + traits.legs * 0.1 + traits.wings * 0.04 - traits.arms * 0.03 - traits.tail * 0.015),
+    health: PLAYER_BASE_STATS.health + traits.spikes * 16 - traits.wings * 5,
+    biteDamage: PLAYER_BASE_STATS.biteDamage + traits.jaw * 7 + traits.horns * 4 + traits.arms * 2,
+    biteCooldown: PLAYER_BASE_STATS.biteCooldown * (1 - traits.glow * 0.08),
+    knockback: PLAYER_BASE_STATS.knockback * (1 + traits.tail * 0.18 + traits.arms * 0.06 - traits.wings * 0.03),
+    defense: clamp(PLAYER_BASE_STATS.defense + traits.spikes * 0.09 - traits.wings * 0.03, 0, 0.3),
+    intimidation: PLAYER_BASE_STATS.intimidation + traits.horns * 0.12 + traits.crest * 0.18 + traits.wings * 0.04,
+    attackReach: 4.35 + traits.jaw * 0.28 + traits.horns * 0.18 + traits.arms * 0.2 + traits.tail * 0.06,
+    lungeSpeed: ATTACK_LUNGE_SPEED * (1 + traits.legs * 0.04 + traits.jaw * 0.03 + traits.tail * 0.04 + traits.wings * 0.05) / Math.pow(mass, 0.08),
     mass,
-    acceleration: (32 + upgrades.legs * 2.2 + upgrades.tail * 0.7) / momentumScale,
-    braking: (29 + upgrades.legs * 1.9 + upgrades.tail * 1.05) / momentumScale,
-    coastDrag: (8.2 + upgrades.tail * 0.45) / momentumScale,
-    turnRate: (7.4 + upgrades.legs * 0.72 - upgrades.spikes * 0.14) / Math.pow(mass, 0.58),
-    attackDrive: (11 + upgrades.jaw * 0.65 + upgrades.horns * 0.45 + upgrades.tail * 0.5) / Math.pow(mass, 0.08),
-    attackCarry: 3.8 + upgrades.tail * 0.7 + upgrades.horns * 0.28,
-    collisionRadius: 1.7 * size + upgrades.spikes * 0.08,
-    bodyPush: 3.8 + upgrades.tail * 0.65 + upgrades.horns * 0.35 + upgrades.spikes * 0.25,
-    impactResist: 1 + upgrades.spikes * 0.14 + Math.max(0, size - 1) * 0.45,
+    acceleration: (32 + traits.legs * 2.2 + traits.wings * 1.5 - traits.tail * 0.55 - traits.arms * 0.95) / momentumScale,
+    braking: (29 + traits.legs * 1.9 + traits.tail * 1.05 + traits.arms * 0.7 + traits.wings * 0.45) / momentumScale,
+    coastDrag: (8.2 + traits.tail * 0.45 + traits.arms * 0.25 - traits.wings * 0.35) / momentumScale,
+    turnRate: (7.4 + traits.legs * 0.72 + traits.wings * 0.88 + traits.arms * 0.28 - traits.spikes * 0.14 - traits.tail * 0.12) / Math.pow(mass, 0.58),
+    attackDrive: (11 + traits.jaw * 0.65 + traits.horns * 0.45 + traits.tail * 0.5 + traits.arms * 0.85 - traits.wings * 0.3) / Math.pow(mass, 0.08),
+    attackCarry: 3.8 + traits.tail * 0.7 + traits.horns * 0.28 + traits.arms * 0.42 - traits.wings * 0.12,
+    collisionRadius: 1.7 * size + traits.spikes * 0.08 + traits.wings * 0.03,
+    bodyPush: 3.8 + traits.tail * 0.65 + traits.horns * 0.35 + traits.spikes * 0.25 + traits.arms * 0.65 - traits.legs * 0.18 - traits.wings * 0.28,
+    impactResist: 1 + traits.spikes * 0.14 + traits.arms * 0.08 - traits.wings * 0.06 + Math.max(0, size - 1) * 0.45,
     path,
     shoreReadiness: path.shoreReadiness,
   };
@@ -808,9 +890,13 @@ function describeTraitLevel(key, level) {
     case "crest":
       return `${level === 1 ? "Open" : "Great"} crest, +${Math.round(level * 18)}% scavenger pressure`;
     case "tail":
-      return `+${Math.round(level * 18)}% knockback`;
+      return `+${Math.round(level * 18)}% knockback, slower burst`;
     case "legs":
-      return `+${Math.round(level * 10)}% speed`;
+      return `+${Math.round(level * 10)}% speed, lighter shove`;
+    case "arms":
+      return `+${level * 2} bite, stronger checks`;
+    case "wings":
+      return `+glide turn, -${level * 5} health`;
     case "spikes":
       return `+${level * 16} health, ${Math.round(level * 9)}% defense`;
     case "glow":
@@ -821,7 +907,8 @@ function describeTraitLevel(key, level) {
 }
 
 function buildCreatureIdentity(profile, traits) {
-  const leadTrait = Object.entries(traits)
+  const resolvedTraits = resolveTraits(traits);
+  const leadTrait = Object.entries(resolvedTraits)
     .filter(([, level]) => level > 0)
     .sort((left, right) => right[1] - left[1])[0]?.[0];
   const sizeWord = profile.size > 1.05 ? "Great" : profile.size < 0.95 ? "Lean" : "Dune";
@@ -831,7 +918,7 @@ function buildCreatureIdentity(profile, traits) {
 }
 
 function getTraitTotal(traits) {
-  return Object.values(traits).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+  return Object.values(resolveTraits(traits)).reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
 }
 
 function getCreatureMaturity(creature) {
@@ -974,9 +1061,10 @@ function mutateEggProfile(profile, traits) {
 }
 
 function applyCreatureAppearance(creature, traits, profile, palette) {
+  const resolvedTraits = resolveTraits(traits);
   const resolvedPalette = palette ?? createPaletteFromProfile(profile);
   const sizeScale = profile.size ?? 1;
-  creature.traits = { ...traits };
+  creature.traits = { ...resolvedTraits };
   creature.profile = { ...profile };
   creature.baseScale = sizeScale;
   creature.group.scale.setScalar(creature.baseScale);
@@ -988,45 +1076,99 @@ function applyCreatureAppearance(creature, traits, profile, palette) {
   refs.materials.markings.color.set(resolvedPalette.markings);
   refs.materials.markings.emissive.set(resolvedPalette.markings);
 
-  refs.body.scale.set(1.16 + traits.spikes * 0.05, 0.93 + traits.spikes * 0.04, 1.66 + traits.legs * 0.04);
-  refs.back.scale.set(0.88 + traits.crest * 0.08, 0.68 + traits.glow * 0.05, 1.06 + traits.tail * 0.06);
-  refs.head.scale.set(0.9 + traits.jaw * 0.04, 0.75 + traits.horns * 0.02, 1.25 + traits.jaw * 0.08);
-  refs.jaw.scale.set(1 + traits.jaw * 0.12, 1 + traits.jaw * 0.08, 1 + traits.jaw * 0.2);
+  refs.body.scale.set(
+    1.16 + resolvedTraits.spikes * 0.05 + resolvedTraits.wings * 0.02,
+    0.93 + resolvedTraits.spikes * 0.04 - resolvedTraits.wings * 0.02,
+    1.66 + resolvedTraits.legs * 0.04 + resolvedTraits.tail * 0.03,
+  );
+  refs.back.scale.set(
+    0.88 + resolvedTraits.crest * 0.08 + resolvedTraits.wings * 0.08,
+    0.68 + resolvedTraits.glow * 0.05 + resolvedTraits.wings * 0.03,
+    1.06 + resolvedTraits.tail * 0.06 + resolvedTraits.wings * 0.05,
+  );
+  refs.head.scale.set(
+    0.9 + resolvedTraits.jaw * 0.04,
+    0.75 + resolvedTraits.horns * 0.02,
+    1.25 + resolvedTraits.jaw * 0.08 + resolvedTraits.arms * 0.02,
+  );
+  refs.jaw.scale.set(1 + resolvedTraits.jaw * 0.12, 1 + resolvedTraits.jaw * 0.08, 1 + resolvedTraits.jaw * 0.2);
   refs.jawFangs.forEach((fang, index) => {
-    fang.scale.setScalar(1 + traits.jaw * 0.12 + traits.horns * 0.06);
-    fang.position.x = (index === 0 ? -1 : 1) * (0.28 + traits.jaw * 0.03) * refs.modelScale;
+    fang.scale.setScalar(1 + resolvedTraits.jaw * 0.12 + resolvedTraits.horns * 0.06);
+    fang.position.x = (index === 0 ? -1 : 1) * (0.28 + resolvedTraits.jaw * 0.03) * refs.modelScale;
   });
-  refs.hornGroup.visible = traits.horns > 0;
-  refs.hornLeft.scale.set(1 + traits.horns * 0.34, 1 + traits.horns * 0.34, 1 + traits.horns * 0.44);
+  refs.hornGroup.visible = resolvedTraits.horns > 0;
+  refs.hornLeft.scale.set(1 + resolvedTraits.horns * 0.34, 1 + resolvedTraits.horns * 0.34, 1 + resolvedTraits.horns * 0.44);
   refs.hornRight.scale.copy(refs.hornLeft.scale);
-  refs.hornLeft.position.y = (0.5 + traits.horns * 0.05) * refs.modelScale;
+  refs.hornLeft.position.y = (0.5 + resolvedTraits.horns * 0.05) * refs.modelScale;
   refs.hornRight.position.y = refs.hornLeft.position.y;
-  refs.crestGroup.visible = traits.crest > 0;
-  refs.crestGroup.scale.set(1, 0.86 + traits.crest * 0.22, 0.96 + traits.crest * 0.12);
-  refs.tail.scale.set(1 + traits.tail * 0.06, 1 + traits.tail * 0.14, 1 + traits.tail * 0.08);
-  refs.tailBlade.visible = traits.tail > 0;
-  refs.tailBlade.scale.set(0.9 + traits.tail * 0.18, 0.9 + traits.tail * 0.12, 0.9 + traits.tail * 0.22);
-  refs.spikeGroup.visible = traits.spikes > 0;
+  refs.crestGroup.visible = resolvedTraits.crest > 0;
+  refs.crestGroup.scale.set(1, 0.86 + resolvedTraits.crest * 0.22, 0.96 + resolvedTraits.crest * 0.12);
+  refs.tail.scale.set(1 + resolvedTraits.tail * 0.08, 1 + resolvedTraits.tail * 0.16, 1 + resolvedTraits.tail * 0.12);
+  refs.tailBlade.visible = resolvedTraits.tail > 0;
+  refs.tailBlade.scale.set(0.9 + resolvedTraits.tail * 0.22, 0.9 + resolvedTraits.tail * 0.14, 0.9 + resolvedTraits.tail * 0.26);
+  refs.armPivots.forEach((pivot, index) => {
+    const sign = index === 0 ? -1 : 1;
+    const armStretch = 1 + resolvedTraits.arms * 0.16;
+    pivot.visible = resolvedTraits.arms > 0;
+    pivot.position.set(
+      sign * (1.04 + resolvedTraits.arms * 0.04) * refs.modelScale,
+      (-0.02 - resolvedTraits.arms * 0.02) * refs.modelScale,
+      (1.04 + resolvedTraits.arms * 0.05) * refs.modelScale,
+    );
+    refs.armMeshes[index].scale.set(1 + resolvedTraits.arms * 0.08, armStretch, 1 + resolvedTraits.arms * 0.14);
+    refs.armMeshes[index].position.set(
+      sign * (0.18 + resolvedTraits.arms * 0.04) * refs.modelScale,
+      -0.4 * refs.modelScale * armStretch,
+      (0.12 + resolvedTraits.arms * 0.05) * refs.modelScale,
+    );
+    refs.armMeshes[index].rotation.z = sign * 0.56;
+    refs.clawMeshes[index].scale.setScalar(0.95 + resolvedTraits.arms * 0.18);
+    refs.clawMeshes[index].position.set(
+      sign * (0.42 + resolvedTraits.arms * 0.05) * refs.modelScale,
+      -0.84 * refs.modelScale * armStretch,
+      (0.34 + resolvedTraits.arms * 0.06) * refs.modelScale,
+    );
+  });
+  refs.wingGroup.visible = resolvedTraits.wings > 0;
+  refs.wingPanels.forEach((panel, index) => {
+    const sign = index === 0 ? -1 : 1;
+    panel.scale.set(1, 1 + resolvedTraits.wings * 0.12, 0.9 + resolvedTraits.wings * 0.22);
+    panel.position.set(
+      sign * (0.22 + resolvedTraits.wings * 0.04) * refs.modelScale,
+      (0.08 + resolvedTraits.wings * 0.04) * refs.modelScale,
+      (-0.18 - resolvedTraits.wings * 0.08) * refs.modelScale,
+    );
+    panel.rotation.z = sign * (0.5 + resolvedTraits.wings * 0.06);
+    panel.rotation.x = Math.PI * (0.08 + resolvedTraits.wings * 0.02);
+    panel.rotation.y = sign * (0.18 + resolvedTraits.wings * 0.05);
+    refs.wingSpars[index].scale.set(1, 1 + resolvedTraits.wings * 0.14, 1 + resolvedTraits.wings * 0.08);
+    refs.wingSpars[index].position.set(
+      sign * (0.12 + resolvedTraits.wings * 0.02) * refs.modelScale,
+      0.05 * refs.modelScale,
+      (-0.08 - resolvedTraits.wings * 0.04) * refs.modelScale,
+    );
+  });
+  refs.spikeGroup.visible = resolvedTraits.spikes > 0;
   refs.spikes.forEach((spike, index) => {
     const tier = index < 2 ? 1 : index < 4 ? 2 : 3;
-    const active = traits.spikes >= tier;
+    const active = resolvedTraits.spikes >= tier;
     spike.visible = active;
-    spike.scale.setScalar(active ? 0.9 + traits.spikes * 0.18 : 0.01);
+    spike.scale.setScalar(active ? 0.9 + resolvedTraits.spikes * 0.18 : 0.01);
   });
   refs.patternGroups.forEach((group, index) => {
     group.visible = index === profile.patternType;
     group.scale.setScalar(profile.patternScale ?? 1);
   });
   refs.markingsGroup.visible = true;
-  refs.materials.markings.opacity = 0.2 + traits.glow * 0.12;
-  creature.baseBackGlow = 0.08 + traits.glow * 0.08 + traits.crest * 0.16;
-  creature.baseMarkingGlow = 0.08 + traits.glow * 0.22;
+  refs.materials.markings.opacity = 0.2 + resolvedTraits.glow * 0.12 + resolvedTraits.wings * 0.03;
+  creature.baseBackGlow = 0.08 + resolvedTraits.glow * 0.08 + resolvedTraits.crest * 0.16 + resolvedTraits.wings * 0.05;
+  creature.baseMarkingGlow = 0.08 + resolvedTraits.glow * 0.22 + resolvedTraits.wings * 0.1;
 
-  const legStretch = 1 + traits.legs * 0.14;
+  const legStretch = 1 + resolvedTraits.legs * 0.14;
   refs.legMeshes.forEach((leg, index) => {
     leg.scale.y = legStretch;
     refs.footMeshes[index].position.y = -1.42 * refs.modelScale * legStretch;
-    refs.legPivots[index].position.y = -0.45 * refs.modelScale - traits.legs * 0.05 * refs.modelScale;
+    refs.legPivots[index].position.y = -0.45 * refs.modelScale - resolvedTraits.legs * 0.05 * refs.modelScale;
   });
 }
 

@@ -9,6 +9,8 @@ export const DEFAULT_TRAITS = {
   crest: 0,
   tail: 0,
   legs: 0,
+  arms: 0,
+  wings: 0,
   spikes: 0,
   glow: 0,
 };

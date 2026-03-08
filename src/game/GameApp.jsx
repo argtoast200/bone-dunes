@@ -58,8 +58,8 @@ const initialState = {
   activeMigration: null,
   socialHint: null,
   blueprintSummary: {
-    unlocked: 2,
-    total: 7,
+    unlocked: 4,
+    total: 9,
   },
   speciesRelations: [],
   gamepadConnected: false,
@@ -83,6 +83,8 @@ const initialState = {
     crest: 0,
     tail: 0,
     legs: 0,
+    arms: 0,
+    wings: 0,
     spikes: 0,
     glow: 0,
   },
@@ -127,7 +129,7 @@ const initialState = {
 
 const UPGRADE_GROUPS = [
   { key: "head", label: "Head", summary: "Commit harder bites.", keys: ["jaw", "horns"] },
-  { key: "mobility", label: "Mobility", summary: "Move cleanly and stay on prey.", keys: ["legs", "tail"] },
+  { key: "bodyPlan", label: "Body Plan", summary: "Stretch the line into different hunting bodies.", keys: ["legs", "arms", "tail", "wings"] },
   { key: "defense", label: "Defense", summary: "Survive heavier contact.", keys: ["spikes", "crest"] },
   { key: "traits", label: "Traits", summary: "Refine recovery and identity.", keys: ["glow"] },
 ];
@@ -798,6 +800,7 @@ export function GameApp() {
                                   <span className="upgrade-slot">{upgrade.slot}</span>
                                   <strong>{upgrade.label}</strong>
                                   <span>{upgrade.description}</span>
+                                  {upgrade.drawback && <span className="upgrade-drawback">Drawback: {upgrade.drawback}</span>}
                                 </div>
                                 <div className="choice-meta">
                                   <span className="choice-cost">

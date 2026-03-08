@@ -865,8 +865,14 @@ button {
   font-size: 1rem;
 }
 
-.choice-summary span:last-child {
+.choice-summary > span {
   color: rgba(248, 234, 209, 0.76);
+}
+
+.upgrade-drawback {
+  color: #ffd7c0;
+  font-size: 0.79rem;
+  line-height: 1.4;
 }
 
 .choice-meta {
