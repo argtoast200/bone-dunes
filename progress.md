@@ -294,6 +294,30 @@ Original prompt: Desktop controls were rework. Left click sets a ground move tar
   - no UI rewrite, only controller navigation/focus behavior
   - no changes to mouse/keyboard menu interaction
 
+## 2026-03-07 Xbox Pause Menu Pass
+
+- Current request: keep `View/Select` for nest evolution, but add a real in-game menu path so controller users can access a menu during play.
+- Implemented:
+  - added a lightweight pause overlay in `src/game/GameApp.jsx` with `Resume Hunt`, `Creature Evolution`, and `Fullscreen`
+  - mapped `Start` to toggle the in-game pause menu during live play in `src/game/SporeSliceGame.js`
+  - kept `View/Select` for direct `Creature Evolution` access at the nest, including from the pause menu
+  - froze gameplay simulation while the pause menu is open so the world does not keep running behind controller navigation
+  - extended overlay navigation/focus logic so the existing D-pad + `A` flow works in the new pause menu too
+  - exposed `pauseMenuOpen` in both emitted UI state and `render_game_to_text()` for deterministic browser testing
+- Validation:
+  - `npm run build` passes
+  - shared client screenshot/state captured at `output/web-game/gamepad-pause-pass`
+  - browser snapshot inspection confirmed the new `Species Pause` overlay renders with the expected buttons and controller instructions
+  - deterministic browser checks with `window.__setTestGamepadState(...)` confirmed:
+    - `Start` opens pause in the dunes and the focused option is `Resume Hunt`
+    - while paused, the player position remains fixed over `500ms`, confirming the world is frozen
+    - D-pad right moves focus through pause actions and `Start` closes the pause menu
+    - at the nest, pausing and moving focus to `Creature Evolution` then pressing `A` opens the editor on the `Creature Evolution` tab
+    - browser console reported `0` errors
+- Scope protected:
+  - no full pause/settings system
+  - no changes to the main gameplay loop beyond freezing while paused
+
 ## 2026-03-07 Evolution-Core Species Nest Pass
 
 - Current request: make evolution the core gameplay loop instead of a live-mutate upgrade list, reduce the oversized top-left panel, remove the old quiet-window framing, and add nest-based egg laying, body switching, and maturation.

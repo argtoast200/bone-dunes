@@ -1335,6 +1335,7 @@ export class SporeSliceGame {
         || this.saveData.speciesCreatures.length > 1
         || Object.values(initialActiveCreature.traits).some(Boolean),
       editorOpen: false,
+      pauseMenuOpen: false,
       editorTab: "evolution",
       lastEvolution: null,
       ecosystemNotice: "The dunes are still settling.",
@@ -2038,6 +2039,40 @@ export class SporeSliceGame {
     this.emitState();
     this.queueOverlayFocus();
     return true;
+  }
+
+  togglePauseMenu(forceOpen) {
+    if (this.state.mode !== "playing" || this.state.respawnTimer > 0 || this.state.editorOpen) {
+      return false;
+    }
+    const nextOpen = typeof forceOpen === "boolean" ? forceOpen : !this.state.pauseMenuOpen;
+    this.state.pauseMenuOpen = nextOpen;
+    if (nextOpen) {
+      this.handleBlur();
+      this.clearMoveTarget();
+      this.input.attackQueued = false;
+      this.state.message = this.state.zone === "nest"
+        ? "Pause menu open. Resume or enter Creature Evolution from the nest."
+        : "Pause menu open. Resume the hunt or return to the nest to evolve.";
+    } else {
+      this.state.message = "Hunt resumed.";
+      this.clearOverlayButtonFocus();
+      this.renderer.domElement.focus();
+    }
+    this.emitState();
+    if (nextOpen) {
+      this.queueOverlayFocus();
+    }
+    return true;
+  }
+
+  openPauseEvolution() {
+    if (!this.state.pauseMenuOpen || this.state.zone !== "nest" || this.state.respawnTimer > 0) {
+      return false;
+    }
+    this.state.pauseMenuOpen = false;
+    this.clearOverlayButtonFocus();
+    return this.toggleEditor(true);
   }
 
   applyActiveCreatureState({ preserveHealthRatio = true } = {}) {
@@ -3047,6 +3082,7 @@ export class SporeSliceGame {
     if (this.state.mode === "menu") {
       this.clearOverlayButtonFocus();
       this.state.mode = "playing";
+      this.state.pauseMenuOpen = false;
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
         ? "Your line still begins in water. Push through new frontier biomes, then bank the gains back at the nest."
@@ -3075,7 +3111,7 @@ export class SporeSliceGame {
     this.gamepad.label = pad.id || "Controller";
     this.state.message = this.state.mode === "menu"
       ? "Controller ready. D-pad moves through menu options and A confirms."
-      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, D-pad navigates menus, and View opens evolution at the nest.`;
+      : `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, Start opens pause, D-pad navigates menus, and View opens evolution at the nest.`;
     this.emitState();
     if (this.isOverlayNavigationActive()) {
       this.primeOverlayFocus();
@@ -3157,7 +3193,7 @@ export class SporeSliceGame {
       this.gamepad.index = pad.index;
       this.gamepad.label = pad.id || "Controller";
       if (this.state.mode !== "menu") {
-        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, D-pad navigates menus, and View opens evolution at the nest.`;
+        this.state.message = `${this.gamepad.label} linked. Left stick moves, right stick aims, A or RT bites, Start opens pause, D-pad navigates menus, and View opens evolution at the nest.`;
       }
       if (this.isOverlayNavigationActive()) {
         this.primeOverlayFocus();
@@ -3229,11 +3265,17 @@ export class SporeSliceGame {
     if (this.gamepad.startPressed) {
       if (this.state.mode === "menu") {
         this.startGame();
+      } else if (this.state.editorOpen) {
+        this.toggleEditor(false);
+      } else {
+        this.togglePauseMenu();
       }
     }
 
     if (this.gamepad.selectPressed) {
-      if (this.state.editorOpen) {
+      if (this.state.pauseMenuOpen && this.state.zone === "nest" && this.state.respawnTimer <= 0) {
+        this.openPauseEvolution();
+      } else if (this.state.editorOpen) {
         this.setEditorTab("evolution");
       } else if (this.state.zone === "nest" && this.state.respawnTimer <= 0) {
         this.toggleEditor(true);
@@ -3265,12 +3307,22 @@ export class SporeSliceGame {
       return;
     }
 
+    if (event.code === "Escape" && pressed && this.state.pauseMenuOpen) {
+      this.togglePauseMenu(false);
+      return;
+    }
+
+    if (event.code === "Escape" && pressed && this.state.mode === "playing") {
+      this.togglePauseMenu();
+      return;
+    }
+
     if (event.code === "KeyF" && pressed && !event.repeat) {
       this.toggleFullscreen();
       return;
     }
 
-    if (this.state.editorOpen) {
+    if (this.state.editorOpen || this.state.pauseMenuOpen) {
       return;
     }
 
@@ -3326,7 +3378,7 @@ export class SporeSliceGame {
 
   handleMouseDown(event) {
     this.renderer.domElement.focus();
-    if (this.state.editorOpen) {
+    if (this.state.editorOpen || this.state.pauseMenuOpen) {
       return;
     }
     if (event.button === 2) {
@@ -3372,7 +3424,7 @@ export class SporeSliceGame {
   }
 
   setVirtualInput(key, pressed) {
-    if (this.state.editorOpen) {
+    if (this.state.editorOpen || this.state.pauseMenuOpen) {
       return;
     }
     if (!(key in this.virtualInput)) {
@@ -3386,7 +3438,7 @@ export class SporeSliceGame {
   }
 
   queueAttack() {
-    if (this.state.mode !== "playing" || this.state.respawnTimer > 0 || this.state.editorOpen) {
+    if (this.state.mode !== "playing" || this.state.respawnTimer > 0 || this.state.editorOpen || this.state.pauseMenuOpen) {
       return;
     }
     this.input.attackQueued = true;
@@ -3441,7 +3493,7 @@ export class SporeSliceGame {
   }
 
   isOverlayNavigationActive() {
-    return this.state.mode === "menu" || this.state.editorOpen;
+    return this.state.mode === "menu" || this.state.pauseMenuOpen || this.state.editorOpen;
   }
 
   clearOverlayButtonFocus() {
@@ -3455,7 +3507,13 @@ export class SporeSliceGame {
   }
 
   getOverlayFocusableButtons() {
-    const selector = this.state.editorOpen ? ".editor-overlay" : this.state.mode === "menu" ? ".menu-overlay" : null;
+    const selector = this.state.editorOpen
+      ? ".editor-overlay"
+      : this.state.pauseMenuOpen
+        ? ".pause-overlay"
+        : this.state.mode === "menu"
+          ? ".menu-overlay"
+          : null;
     if (!selector) {
       return [];
     }
@@ -3611,6 +3669,7 @@ export class SporeSliceGame {
       if (!this.saveData.evolutionDraft) {
         this.resetEvolutionDraft();
       }
+      this.state.pauseMenuOpen = false;
       this.state.editorOpen = true;
       this.state.editorTab = "evolution";
       this.state.message = "Species nest open. Spend DNA on an egg plan, lay it, or switch to another body.";
@@ -3731,6 +3790,7 @@ export class SporeSliceGame {
           shoreLabel: activePath.shoreLabel,
           shoreReadiness: Number((this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0).toFixed(2)),
         },
+        pauseMenuOpen: this.state.pauseMenuOpen,
         editorOpen: this.state.editorOpen,
         editorTab: this.state.editorTab,
         message: this.state.message,
@@ -5984,6 +6044,16 @@ export class SporeSliceGame {
   }
 
   update(dt) {
+    this.pollGamepadInput();
+    if (this.state.pauseMenuOpen) {
+      this.updateCamera(0);
+      this.updateMoveTargetMarker(0);
+      if (this.elapsed % 0.2 < dt) {
+        this.emitState();
+      }
+      return;
+    }
+
     this.elapsed += dt;
     this.socialEncounter.cooldown = Math.max(0, this.socialEncounter.cooldown - dt);
     if (this.socialEncounter.timer > 0) {
@@ -6001,7 +6071,6 @@ export class SporeSliceGame {
     }
     const simDt = dt * (this.impactSlow > 0 ? 0.24 : 1);
     this.impactSlow = Math.max(0, this.impactSlow - dt);
-    this.pollGamepadInput();
     this.updateAmbient(dt);
     this.updatePlayer(simDt);
     this.updateFood(simDt);
@@ -6042,6 +6111,10 @@ export class SporeSliceGame {
         : this.state.editorTab === "evolution"
           ? "Creature Evolution open. Spend DNA on unlocked blueprints, then lay the egg."
           : "Species Nest open. Swap between bodies, lay the egg, or fast evolve a hatchling with species XP.";
+    } else if (this.state.pauseMenuOpen) {
+      this.state.message = this.state.zone === "nest"
+        ? "Pause menu open. Resume or open Creature Evolution from the nest."
+        : "Pause menu open. Resume the hunt or return to the nest to evolve.";
     } else if (this.state.mode === "playing" && !this.state.editorOpen) {
       const socialOpportunity = this.getSocialOpportunity();
       if (socialOpportunity && socialOpportunity.status !== "friendly" && socialOpportunity.canAttempt && this.elapsed % 7 < dt) {
@@ -6355,6 +6428,7 @@ export class SporeSliceGame {
       upgrades: draft.traits,
       upgradeEntries,
       evolutionPreviewStats,
+      pauseMenuOpen: this.state.pauseMenuOpen,
       editorOpen: this.state.editorOpen,
       editorTab: this.state.editorTab,
       editorPulse: this.player.evolutionTimer > 0 ? this.player.evolutionTimer / 1.45 : 0,
@@ -6417,7 +6491,7 @@ export class SporeSliceGame {
         favoredBiomes: draftPath.favoredBiomes,
       },
       controlsHint: this.gamepad.connected
-        ? "Xbox pad: left stick move, right stick aim, A/RT bite or confirm, B/LB sprint, D-pad navigates menus, View opens Creature Evolution at the nest. Keyboard Q/E/R sends social signals."
+        ? "Xbox pad: left stick move, right stick aim, A/RT bite or confirm, B/LB sprint, Start opens pause, D-pad navigates menus, View opens Creature Evolution at the nest. Keyboard Q/E/R sends social signals."
         : this.state.mode === "menu"
           ? "Left click move, WASD/Arrows steer, Q/E/R signal species, Space/right click bite, then return to the nest to evolve the next water-born body"
         : this.state.editorOpen

@@ -89,6 +89,7 @@ const initialState = {
   upgradeEntries: [],
   evolutionPreviewStats: [],
   editorOpen: false,
+  pauseMenuOpen: false,
   editorTab: "evolution",
   editorPulse: 0,
   canOpenEditor: false,
@@ -328,7 +329,7 @@ export function GameApp() {
       .filter(Boolean),
   }));
   const liveControls = uiState.gamepadConnected
-    ? "A or RT bite/select • B or LB sprint • D-pad navigates menus • View opens Creature Evolution at the nest"
+    ? "A or RT bite/select • B or LB sprint • D-pad navigates menus • Start opens pause • View opens Creature Evolution at the nest"
     : "Shift sprint • Q/E/R social • Space or right click bite • F fullscreen";
 
   let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";
@@ -562,6 +563,60 @@ export function GameApp() {
                   </button>
                   <button className="ghost-btn" type="button" onClick={() => gameRef.current?.resetProgress()}>
                     New Organism
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {uiState.pauseMenuOpen && uiState.mode === "playing" && !uiState.editorOpen && (
+            <div className="pause-overlay">
+              <div className="menu-card pause-card menu-shell">
+                <div className="menu-hero">
+                  <div>
+                    <p className="eyebrow">In-Game Menu</p>
+                    <h2>Species Pause</h2>
+                    <p>
+                      Pause the hunt, orient the line, then either resume or return to the nest to shape the next body.
+                    </p>
+                  </div>
+                  <div className="menu-pill-row">
+                    <span className="lineage-pill active">DNA {uiState.dna}</span>
+                    <span className="lineage-pill">XP {uiState.speciesXp}</span>
+                    <span className="lineage-pill">{uiState.zone === "nest" ? "At Nest" : uiState.biomeName}</span>
+                  </div>
+                </div>
+
+                <div className="menu-grid pause-grid">
+                  <div className="menu-panel">
+                    <h3>Current Body</h3>
+                    <p>{stageLabel}</p>
+                    <p>{activeIdentity}</p>
+                    <p>{uiState.zone === "nest" ? "The species nest is within reach." : "You are out in the field. Return to the nest to evolve."}</p>
+                  </div>
+                  <div className="menu-panel">
+                    <h3>Controller</h3>
+                    <p>`D-pad` moves through pause options</p>
+                    <p>`A` confirms the focused option</p>
+                    <p>`Start` closes this menu</p>
+                    <p>`View` opens evolution directly, but only at the nest</p>
+                  </div>
+                </div>
+
+                <div className="menu-actions">
+                  <button className="start-btn" type="button" onClick={() => gameRef.current?.togglePauseMenu(false)}>
+                    Resume Hunt
+                  </button>
+                  <button
+                    className="utility-btn"
+                    type="button"
+                    disabled={!uiState.canOpenEditor}
+                    onClick={() => gameRef.current?.openPauseEvolution()}
+                  >
+                    Creature Evolution
+                  </button>
+                  <button className="ghost-btn" type="button" onClick={() => gameRef.current?.toggleFullscreen()}>
+                    Fullscreen
                   </button>
                 </div>
               </div>

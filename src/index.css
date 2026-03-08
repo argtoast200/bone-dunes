@@ -493,6 +493,7 @@ button {
 }
 
 .menu-overlay,
+.pause-overlay,
 .editor-overlay {
   position: absolute;
   inset: 0;
@@ -503,6 +504,12 @@ button {
 
 .menu-overlay {
   background: linear-gradient(180deg, rgba(11, 9, 7, 0.24), rgba(11, 9, 7, 0.42));
+}
+
+.pause-overlay {
+  z-index: 3;
+  padding: 20px;
+  background: linear-gradient(180deg, rgba(10, 9, 8, 0.3), rgba(8, 7, 6, 0.52));
 }
 
 .editor-overlay {
@@ -519,6 +526,10 @@ button {
 .menu-card {
   width: min(740px, calc(100vw - 40px));
   padding: 28px;
+}
+
+.pause-card {
+  width: min(620px, calc(100vw - 40px));
 }
 
 .menu-shell {
@@ -539,6 +550,10 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.pause-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .menu-panel,
