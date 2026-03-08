@@ -10,8 +10,9 @@ export const ORIGIN_POOL = {
   spawnX: -39,
   spawnZ: 25,
 };
-export const SHALLOWS_ZONE = { x: -16, z: 18, radius: 19 };
+export const SHALLOWS_ZONE = { x: -16, z: 18, radius: 19, surfaceY: -0.72 };
 export const MARSH_ZONE = { x: -8, z: 30, radius: 15 };
+export const FOREST_ZONE = { x: 10, z: 35, radius: 12 };
 export const SALT_FLATS_ZONE = { x: -30, z: -23, radius: 16 };
 export const EMBER_RIDGE_ZONE = { x: 31, z: 27, radius: 15 };
 
@@ -67,6 +68,23 @@ export const BIOME_DEFS = {
     order: 2,
     unlockHint: "Reach 6 XP or befriend Burrowing Herbivores",
   },
+  verdantForest: {
+    key: "verdantForest",
+    label: "Verdant Forest",
+    shortLabel: "Forest",
+    summary: "Green grass, rooted cover, and shaded lanes where the ground finally reads as living land.",
+    pressure: "Cover frontier",
+    uiColor: 0x8fda76,
+    speed: 0.98,
+    traction: 1.04,
+    dust: 0.22,
+    dnaMultiplier: 1.08,
+    masteryRate: 1.1,
+    newbornMasteryRate: 1.18,
+    water: false,
+    order: 4,
+    unlockHint: "Reach 10 XP, master Glow Marsh (9), or befriend Burrowing Herbivores",
+  },
   boneDunes: {
     key: "boneDunes",
     label: "Bone Dunes",
@@ -98,7 +116,7 @@ export const BIOME_DEFS = {
     masteryRate: 1.14,
     newbornMasteryRate: 0.72,
     water: false,
-    order: 4,
+    order: 5,
     unlockHint: "Reach 14 XP, master Bone Dunes (12), or evolve a true runner.",
   },
   jawBasin: {
@@ -115,7 +133,7 @@ export const BIOME_DEFS = {
     masteryRate: 1.18,
     newbornMasteryRate: 0.55,
     water: false,
-    order: 5,
+    order: 6,
     unlockHint: "Reach 18 XP or draw Bone Stalkers into open war",
   },
   emberRidge: {
@@ -132,7 +150,7 @@ export const BIOME_DEFS = {
     masteryRate: 1.22,
     newbornMasteryRate: 0.46,
     water: false,
-    order: 6,
+    order: 7,
     unlockHint: "Reach 26 XP, master Jaw Basin (14), or become a true bruiser.",
   },
 };
@@ -275,6 +293,9 @@ export const FOOD_SPAWNS = [
   { x: 24, z: 30, dna: 5, rare: true },
   { x: 31, z: 34, dna: 6, rare: true },
   { x: 38, z: 25, dna: 6, rare: true },
+  { x: 7, z: 36, dna: 4, rare: false },
+  { x: 13, z: 39, dna: 5, rare: false },
+  { x: 18, z: 35, dna: 5, rare: true },
   { x: 36, z: -22, dna: 6, rare: true },
   { x: 16, z: -27, dna: 6, rare: true },
   { x: 22, z: -31, dna: 7, rare: true },

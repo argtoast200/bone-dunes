@@ -125,11 +125,11 @@ const SPECIES_PATH_DEFS = {
     shortLabel: "Drifter",
     summary: "Soft-bodied swimmer still learning whether the line belongs in water or on land.",
     favoredBiomes: ["Origin Waters", "Sunlit Shallows"],
-    biomeSpeed: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.96, boneDunes: 0.94, saltFlats: 0.92, jawBasin: 0.9, emberRidge: 0.88 },
-    biomeTraction: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.98, boneDunes: 0.94, saltFlats: 0.96, jawBasin: 0.9, emberRidge: 0.91 },
-    biomeTurn: { originWaters: 1.08, sunlitShallows: 1.03, glowMarsh: 0.98, boneDunes: 0.96, saltFlats: 0.96, jawBasin: 0.92, emberRidge: 0.9 },
-    biomeSprintDrain: { originWaters: 0.94, sunlitShallows: 0.98, glowMarsh: 1.02, boneDunes: 1.08, saltFlats: 1.1, jawBasin: 1.12, emberRidge: 1.14 },
-    biomeAttack: { originWaters: 0.98, sunlitShallows: 1, glowMarsh: 0.98, boneDunes: 0.96, saltFlats: 0.95, jawBasin: 0.94, emberRidge: 0.95 },
+    biomeSpeed: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.96, verdantForest: 0.97, boneDunes: 0.94, saltFlats: 0.92, jawBasin: 0.9, emberRidge: 0.88 },
+    biomeTraction: { originWaters: 1.04, sunlitShallows: 1.02, glowMarsh: 0.98, verdantForest: 1.01, boneDunes: 0.94, saltFlats: 0.96, jawBasin: 0.9, emberRidge: 0.91 },
+    biomeTurn: { originWaters: 1.08, sunlitShallows: 1.03, glowMarsh: 0.98, verdantForest: 1.02, boneDunes: 0.96, saltFlats: 0.96, jawBasin: 0.92, emberRidge: 0.9 },
+    biomeSprintDrain: { originWaters: 0.94, sunlitShallows: 0.98, glowMarsh: 1.02, verdantForest: 0.98, boneDunes: 1.08, saltFlats: 1.1, jawBasin: 1.12, emberRidge: 1.14 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1, glowMarsh: 0.98, verdantForest: 1, boneDunes: 0.96, saltFlats: 0.95, jawBasin: 0.94, emberRidge: 0.95 },
   },
   waterGlider: {
     key: "waterGlider",
@@ -137,23 +137,23 @@ const SPECIES_PATH_DEFS = {
     shortLabel: "Glider",
     summary: "Tail-and-wing bodies carve clean lines through water and hug the shoreline with speed.",
     favoredBiomes: ["Origin Waters", "Sunlit Shallows", "Salt Flats"],
-    biomeSpeed: { originWaters: 1.14, sunlitShallows: 1.11, glowMarsh: 1, boneDunes: 0.9, saltFlats: 1.08, jawBasin: 0.88, emberRidge: 0.84 },
-    biomeTraction: { originWaters: 1.1, sunlitShallows: 1.08, glowMarsh: 1.02, boneDunes: 0.92, saltFlats: 1.06, jawBasin: 0.9, emberRidge: 0.88 },
-    biomeTurn: { originWaters: 1.16, sunlitShallows: 1.12, glowMarsh: 1.02, boneDunes: 0.94, saltFlats: 1.08, jawBasin: 0.92, emberRidge: 0.88 },
-    biomeSprintDrain: { originWaters: 0.84, sunlitShallows: 0.9, glowMarsh: 0.96, boneDunes: 1.08, saltFlats: 0.82, jawBasin: 1.12, emberRidge: 1.14 },
-    biomeAttack: { originWaters: 1.04, sunlitShallows: 1.03, glowMarsh: 1, boneDunes: 0.98, saltFlats: 1.01, jawBasin: 0.96, emberRidge: 0.94 },
+    biomeSpeed: { originWaters: 1.14, sunlitShallows: 1.11, glowMarsh: 1, verdantForest: 0.94, boneDunes: 0.9, saltFlats: 1.08, jawBasin: 0.88, emberRidge: 0.84 },
+    biomeTraction: { originWaters: 1.1, sunlitShallows: 1.08, glowMarsh: 1.02, verdantForest: 0.97, boneDunes: 0.92, saltFlats: 1.06, jawBasin: 0.9, emberRidge: 0.88 },
+    biomeTurn: { originWaters: 1.16, sunlitShallows: 1.12, glowMarsh: 1.02, verdantForest: 0.98, boneDunes: 0.94, saltFlats: 1.08, jawBasin: 0.92, emberRidge: 0.88 },
+    biomeSprintDrain: { originWaters: 0.84, sunlitShallows: 0.9, glowMarsh: 0.96, verdantForest: 1.04, boneDunes: 1.08, saltFlats: 0.82, jawBasin: 1.12, emberRidge: 1.14 },
+    biomeAttack: { originWaters: 1.04, sunlitShallows: 1.03, glowMarsh: 1, verdantForest: 0.98, boneDunes: 0.98, saltFlats: 1.01, jawBasin: 0.96, emberRidge: 0.94 },
   },
   marshAmbusher: {
     key: "marshAmbusher",
     label: "Marsh Ambusher",
     shortLabel: "Ambusher",
     summary: "Glow-and-arm bodies sit deep in soft ground, then explode into close-range strikes.",
-    favoredBiomes: ["Glow Marsh", "Sunlit Shallows", "Ember Ridge"],
-    biomeSpeed: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 1.08, boneDunes: 0.97, saltFlats: 0.94, jawBasin: 0.96, emberRidge: 0.98 },
-    biomeTraction: { originWaters: 1, sunlitShallows: 1.02, glowMarsh: 1.18, boneDunes: 0.96, saltFlats: 0.98, jawBasin: 1.01, emberRidge: 1.06 },
-    biomeTurn: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.08, boneDunes: 0.98, saltFlats: 0.97, jawBasin: 0.99, emberRidge: 1.02 },
-    biomeSprintDrain: { originWaters: 0.98, sunlitShallows: 0.98, glowMarsh: 0.86, boneDunes: 1.02, saltFlats: 1.02, jawBasin: 1.04, emberRidge: 0.98 },
-    biomeAttack: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.1, boneDunes: 1, saltFlats: 1.01, jawBasin: 1.02, emberRidge: 1.08 },
+    favoredBiomes: ["Glow Marsh", "Verdant Forest", "Sunlit Shallows"],
+    biomeSpeed: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 1.08, verdantForest: 1.04, boneDunes: 0.97, saltFlats: 0.94, jawBasin: 0.96, emberRidge: 0.98 },
+    biomeTraction: { originWaters: 1, sunlitShallows: 1.02, glowMarsh: 1.18, verdantForest: 1.11, boneDunes: 0.96, saltFlats: 0.98, jawBasin: 1.01, emberRidge: 1.06 },
+    biomeTurn: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.08, verdantForest: 1.06, boneDunes: 0.98, saltFlats: 0.97, jawBasin: 0.99, emberRidge: 1.02 },
+    biomeSprintDrain: { originWaters: 0.98, sunlitShallows: 0.98, glowMarsh: 0.86, verdantForest: 0.92, boneDunes: 1.02, saltFlats: 1.02, jawBasin: 1.04, emberRidge: 0.98 },
+    biomeAttack: { originWaters: 0.99, sunlitShallows: 1.02, glowMarsh: 1.1, verdantForest: 1.08, boneDunes: 1, saltFlats: 1.01, jawBasin: 1.02, emberRidge: 1.08 },
   },
   duneRunner: {
     key: "duneRunner",
@@ -161,11 +161,11 @@ const SPECIES_PATH_DEFS = {
     shortLabel: "Runner",
     summary: "Long-legged chase bodies cross open sand cleanly and turn speed into long hunts.",
     favoredBiomes: ["Bone Dunes", "Salt Flats", "Sunlit Shallows"],
-    biomeSpeed: { originWaters: 0.92, sunlitShallows: 1.03, glowMarsh: 0.98, boneDunes: 1.13, saltFlats: 1.18, jawBasin: 1.05, emberRidge: 0.98 },
-    biomeTraction: { originWaters: 0.94, sunlitShallows: 1.02, glowMarsh: 0.96, boneDunes: 1.1, saltFlats: 1.14, jawBasin: 1.04, emberRidge: 0.99 },
-    biomeTurn: { originWaters: 0.96, sunlitShallows: 1.04, glowMarsh: 0.98, boneDunes: 1.09, saltFlats: 1.06, jawBasin: 1.03, emberRidge: 0.97 },
-    biomeSprintDrain: { originWaters: 1.06, sunlitShallows: 0.96, glowMarsh: 1.02, boneDunes: 0.8, saltFlats: 0.74, jawBasin: 0.9, emberRidge: 0.98 },
-    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 0.99, boneDunes: 1.04, saltFlats: 1.03, jawBasin: 1.02, emberRidge: 1.01 },
+    biomeSpeed: { originWaters: 0.92, sunlitShallows: 1.03, glowMarsh: 0.98, verdantForest: 1.01, boneDunes: 1.13, saltFlats: 1.18, jawBasin: 1.05, emberRidge: 0.98 },
+    biomeTraction: { originWaters: 0.94, sunlitShallows: 1.02, glowMarsh: 0.96, verdantForest: 1.03, boneDunes: 1.1, saltFlats: 1.14, jawBasin: 1.04, emberRidge: 0.99 },
+    biomeTurn: { originWaters: 0.96, sunlitShallows: 1.04, glowMarsh: 0.98, verdantForest: 1.04, boneDunes: 1.09, saltFlats: 1.06, jawBasin: 1.03, emberRidge: 0.97 },
+    biomeSprintDrain: { originWaters: 1.06, sunlitShallows: 0.96, glowMarsh: 1.02, verdantForest: 0.94, boneDunes: 0.8, saltFlats: 0.74, jawBasin: 0.9, emberRidge: 0.98 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.01, glowMarsh: 0.99, verdantForest: 1.01, boneDunes: 1.04, saltFlats: 1.03, jawBasin: 1.02, emberRidge: 1.01 },
   },
   basinBruiser: {
     key: "basinBruiser",
@@ -173,11 +173,11 @@ const SPECIES_PATH_DEFS = {
     shortLabel: "Bruiser",
     summary: "Jaw-and-arm frames absorb punishment, push bodies around, and own hard ground.",
     favoredBiomes: ["Jaw Basin", "Ember Ridge", "Bone Dunes"],
-    biomeSpeed: { originWaters: 0.86, sunlitShallows: 0.92, glowMarsh: 0.97, boneDunes: 1, saltFlats: 1.02, jawBasin: 1.06, emberRidge: 1.03 },
-    biomeTraction: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 1.02, boneDunes: 1.05, saltFlats: 1.08, jawBasin: 1.12, emberRidge: 1.14 },
-    biomeTurn: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 0.98, boneDunes: 1, saltFlats: 1, jawBasin: 1.02, emberRidge: 1.04 },
-    biomeSprintDrain: { originWaters: 1.12, sunlitShallows: 1.06, glowMarsh: 1, boneDunes: 0.98, saltFlats: 0.94, jawBasin: 0.92, emberRidge: 0.9 },
-    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.02, glowMarsh: 1.04, boneDunes: 1.07, saltFlats: 1.08, jawBasin: 1.14, emberRidge: 1.18 },
+    biomeSpeed: { originWaters: 0.86, sunlitShallows: 0.92, glowMarsh: 0.97, verdantForest: 0.98, boneDunes: 1, saltFlats: 1.02, jawBasin: 1.06, emberRidge: 1.03 },
+    biomeTraction: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 1.02, verdantForest: 1.08, boneDunes: 1.05, saltFlats: 1.08, jawBasin: 1.12, emberRidge: 1.14 },
+    biomeTurn: { originWaters: 0.9, sunlitShallows: 0.95, glowMarsh: 0.98, verdantForest: 0.99, boneDunes: 1, saltFlats: 1, jawBasin: 1.02, emberRidge: 1.04 },
+    biomeSprintDrain: { originWaters: 1.12, sunlitShallows: 1.06, glowMarsh: 1, verdantForest: 0.96, boneDunes: 0.98, saltFlats: 0.94, jawBasin: 0.92, emberRidge: 0.9 },
+    biomeAttack: { originWaters: 0.98, sunlitShallows: 1.02, glowMarsh: 1.04, verdantForest: 1.08, boneDunes: 1.07, saltFlats: 1.08, jawBasin: 1.14, emberRidge: 1.18 },
   },
 };
 
@@ -2663,6 +2663,7 @@ export class SporeSliceGame {
 
     const activeCreature = this.getActiveCreature();
     const originMastery = this.saveData.biomeProgress.mastery.originWaters ?? 0;
+    const marshMastery = this.saveData.biomeProgress.mastery.glowMarsh ?? 0;
     const dunesMastery = this.saveData.biomeProgress.mastery.boneDunes ?? 0;
     const basinMastery = this.saveData.biomeProgress.mastery.jawBasin ?? 0;
     const activePathKey = this.playerStats.path?.key ?? computeSpeciesPath(activeCreature?.traits ?? this.state.upgrades, activeCreature?.profile ?? this.state.creatureProfile).key;
@@ -2678,6 +2679,10 @@ export class SporeSliceGame {
         return (this.state.speciesXp ?? 0) >= 8
           || (activeCreature?.growth ?? 0) >= 0.55
           || getTraitTotal(activeCreature?.traits ?? this.state.upgrades) > 0;
+      case "verdantForest":
+        return (this.state.speciesXp ?? 0) >= 10
+          || marshMastery >= 9
+          || (this.getSpeciesRelation("burrowingHerbivore")?.status === "friendly");
       case "saltFlats":
         return (this.state.speciesXp ?? 0) >= 14
           || dunesMastery >= 12
@@ -6200,6 +6205,8 @@ export class SporeSliceGame {
       this.state.objective = `${activePath.label}: Sunlit Shallows are the first shoreline test before committing to a land route.`;
     } else if (currentBiome.key === "glowMarsh") {
       this.state.objective = `${activePath.label}: Glow Marsh rewards patient bodies that can hold momentum in soft ground.`;
+    } else if (currentBiome.key === "verdantForest") {
+      this.state.objective = `${activePath.label}: Verdant Forest trades open speed for cover, traction, and greener feeding lanes.`;
     } else if (currentBiome.key === "saltFlats") {
       this.state.objective = `${activePath.label}: Salt Flats reward bodies that can keep traction and survive long exposed sprints.`;
     } else if (currentBiome.key === "emberRidge") {
@@ -6346,8 +6353,8 @@ export class SporeSliceGame {
       this.world.waterSurfaces.forEach((surface, index) => {
         surface.mesh.position.y = surface.baseY + Math.sin(this.elapsed * (0.75 + index * 0.18) + surface.phase) * surface.drift;
         const swell = 1 + Math.sin(this.elapsed * (0.55 + index * 0.12) + surface.phase) * surface.scale;
-        surface.mesh.scale.setScalar(swell);
-        surface.mesh.material.opacity = (index === 0 ? 0.3 : 0.16) + Math.sin(this.elapsed * (0.65 + index * 0.16) + surface.phase) * 0.015;
+        surface.mesh.scale.copy(surface.baseScale).multiplyScalar(swell);
+        surface.mesh.material.opacity = surface.baseOpacity + Math.sin(this.elapsed * (0.65 + index * 0.16) + surface.phase) * 0.015;
       });
     }
     if (this.world.waterfalls) {
@@ -6401,14 +6408,50 @@ export class SporeSliceGame {
       this.dangerLight.intensity = 5.1 + Math.sin(this.elapsed * 1.5 + 0.9) * 0.55 + (this.state.zone === "danger" ? 0.8 : 0);
     }
     if (this.hemiLight) {
-      this.hemiLight.intensity = this.state.zone === "danger" ? 1.45 : biome.water ? 1.78 : biome.key === "glowMarsh" ? 1.6 : 1.68;
+      this.hemiLight.intensity = this.state.zone === "danger"
+        ? 1.45
+        : biome.water
+          ? 1.78
+          : biome.key === "glowMarsh"
+            ? 1.6
+            : biome.key === "verdantForest"
+              ? 1.74
+              : 1.68;
     }
     if (this.scene.fog) {
-      this.scene.fog.density = this.state.zone === "danger" ? 0.026 : biome.water ? 0.0195 : biome.key === "glowMarsh" ? 0.024 : 0.022;
-      this.scene.fog.color.set(this.state.zone === "danger" ? 0xc7855d : biome.water ? 0xa5cdbd : biome.key === "glowMarsh" ? 0xb49d72 : 0xd89d69);
+      this.scene.fog.density = this.state.zone === "danger"
+        ? 0.026
+        : biome.water
+          ? 0.0195
+          : biome.key === "glowMarsh"
+            ? 0.024
+            : biome.key === "verdantForest"
+              ? 0.0205
+              : 0.022;
+      this.scene.fog.color.set(
+        this.state.zone === "danger"
+          ? 0xc7855d
+          : biome.water
+            ? 0xa5cdbd
+            : biome.key === "glowMarsh"
+              ? 0xb49d72
+              : biome.key === "verdantForest"
+                ? 0xadc58a
+                : 0xd89d69,
+      );
     }
     if (this.scene.background) {
-      this.scene.background.set(this.state.zone === "danger" ? 0xe0a071 : biome.water ? 0xcfe0c3 : biome.key === "glowMarsh" ? 0xd7b67d : 0xe3ae73);
+      this.scene.background.set(
+        this.state.zone === "danger"
+          ? 0xe0a071
+          : biome.water
+            ? 0xcfe0c3
+            : biome.key === "glowMarsh"
+              ? 0xd7b67d
+              : biome.key === "verdantForest"
+                ? 0xc4d99a
+                : 0xe3ae73,
+      );
     }
     if (this.world.nestRing) {
       this.world.nestRing.material.opacity = 0.16 + Math.sin(this.elapsed * 2.2) * 0.04 + (this.state.zone === "nest" ? 0.07 : 0);

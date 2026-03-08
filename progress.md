@@ -824,3 +824,40 @@ Additional biome pass:
     - forcing the same style of landing onto nearby dry ground at about `(27.1, -18.1)` dropped health to `28`, recorded `lastFallDamage: 92`, and kept `lastLandingSurface: "ground"`
   - browser console review:
     - fresh page load is clean aside from the React DevTools info banner
+
+## 2026-03-07 Water + Forest Readability Pass
+
+- Current request:
+  - make the water align with the topography
+  - make it clearer where there is water and where there is land
+  - add green grass in an adjacent forest biome
+- Implemented:
+  - rewired shoreline classification in `src/game/world.js` so visible water and biome lookup both derive from the same origin-pool and shallows water-factor helpers instead of a broad rectangular shallow-water guess
+  - reshaped the terrain around the origin lagoon and shallows with explicit water targets plus shore lift bands so the basin reads like a real depression instead of a flat tint
+  - rebuilt the visible water pass into smaller topography-following core pools plus a restrained estuary ribbon, and fixed the water animation code in `src/game/SporeSliceGame.js` so non-uniform water meshes keep their intended shape while animating
+  - strengthened terrain coloring so water, beach, dune, marsh, and forest ground separate more clearly at a glance
+  - added a real `Verdant Forest` frontier in `src/game/config.js`, `src/game/world.js`, `src/game/SporeSliceGame.js`, and `src/game/GameApp.jsx` with:
+    - separate biome unlock rules
+    - forest-aware movement/path tuning
+    - forest objective text and atmosphere colors
+    - green tree canopies, denser grass clumps, greener ground response, and forest motes
+  - moved the forest zone west after browser inspection showed it overlapped too much with `Ember Ridge`, which caused the supposed forest center to classify as the mountain biome
+- Validation:
+  - `npm run build` passes after the water/forest pass
+  - required standalone `$WEB_GAME_CLIENT` runs completed:
+    - `output/web-game/water-forest-pass-1/shot-0.png`
+    - `output/web-game/water-forest-pass-2/shot-0.png`
+    - `output/web-game/water-forest-pass-3/shot-0.png`
+    - `output/web-game/water-forest-pass-4/shot-0.png`
+    - `output/web-game/water-forest-pass-4/state-0.json`
+  - targeted browser captures:
+    - `output/web-game/water-forest-pass-3/shore-inspect.png`
+    - `output/web-game/water-forest-pass-4/forest-page.png`
+    - `output/web-game/water-forest-pass-4/forest-state.json`
+  - visual inspection:
+    - water now reads as a depressed lagoon + shallows route instead of disconnected flat puddles
+    - the adjacent forest now visibly introduces green canopy and grass coverage instead of staying all-sand
+  - deterministic/browser checks:
+    - fresh autostart still begins in `Origin Waters`
+    - teleport validation at `(10, 35)` now reports biome key `verdantForest`
+    - no browser console errors beyond the React DevTools info banner

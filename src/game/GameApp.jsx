@@ -546,7 +546,7 @@ export function GameApp() {
                 <div className="menu-grid">
                   <div className="menu-panel">
                     <h3>Core Loop</h3>
-                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, dunes, salt flats, basin, and ember ridges. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
+                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, forest, dunes, salt flats, basin, and ember ridges. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>

@@ -4,6 +4,7 @@ import {
   BIOME_DEFS,
   DANGER_ZONE,
   EMBER_RIDGE_ZONE,
+  FOREST_ZONE,
   MARSH_ZONE,
   NEST_POSITION,
   ORIGIN_POOL,
@@ -18,6 +19,10 @@ const rockColor = 0x84634d;
 const boneColor = 0xf2deb8;
 const plantStemColor = 0x314b36;
 const plantGlowColor = 0x79f2d2;
+const grassBrightColor = 0xb4e27d;
+const grassDeepColor = 0x6d9f4e;
+const barkColor = 0x6e4c34;
+const canopyColor = 0x7fbe5f;
 
 const tempColor = new THREE.Color();
 const yAxis = new THREE.Vector3(0, 1, 0);
@@ -58,6 +63,10 @@ function smoothstep(edge0, edge1, value) {
   return t * t * (3 - 2 * t);
 }
 
+function clamp(value, min, max) {
+  return THREE.MathUtils.clamp(value, min, max);
+}
+
 function radialPeak(x, z, centerX, centerZ, radius, height, sharpness = 1.75) {
   const distance = Math.hypot(x - centerX, z - centerZ);
   const t = Math.max(0, 1 - distance / radius);
@@ -76,6 +85,43 @@ function resolvePoint(positionOrX, zValue) {
   return { x: positionOrX, z: zValue };
 }
 
+function segmentBandFactor(x, z, startX, startZ, endX, endZ, radius, feather = radius + 4) {
+  const abX = endX - startX;
+  const abZ = endZ - startZ;
+  const abLengthSq = abX * abX + abZ * abZ;
+  const t = abLengthSq <= 0.0001 ? 0 : THREE.MathUtils.clamp(((x - startX) * abX + (z - startZ) * abZ) / abLengthSq, 0, 1);
+  const closestX = startX + abX * t;
+  const closestZ = startZ + abZ * t;
+  const distance = Math.hypot(x - closestX, z - closestZ);
+  return smoothstep(feather, radius, distance);
+}
+
+function getOriginWaterFactor(x, z) {
+  const distance = Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z);
+  return Math.max(0, 1 - distance / (ORIGIN_POOL.radius + 4));
+}
+
+function getShallowsWaterFactor(x, z) {
+  const basinDistance = Math.hypot(x - SHALLOWS_ZONE.x, z - SHALLOWS_ZONE.z);
+  const basinFactor = Math.max(0, 1 - basinDistance / (SHALLOWS_ZONE.radius + 4.5));
+  const estuaryFactor = segmentBandFactor(
+    x,
+    z,
+    ORIGIN_POOL.x + 1.2,
+    ORIGIN_POOL.z - 0.2,
+    SHALLOWS_ZONE.x + 6.2,
+    SHALLOWS_ZONE.z - 1.6,
+    6.9,
+    11.4,
+  );
+  return clamp(Math.max(basinFactor * 0.92, estuaryFactor * 0.88), 0, 1);
+}
+
+function getForestFactor(x, z) {
+  const distance = Math.hypot(x - FOREST_ZONE.x, z - FOREST_ZONE.z);
+  return Math.max(0, 1 - distance / (FOREST_ZONE.radius + 5));
+}
+
 export function getBiomeKeyAtPosition(positionOrX, zValue = 0) {
   const { x, z } = resolvePoint(positionOrX, zValue);
   const dangerDistance = Math.hypot(x - DANGER_ZONE.x, z - DANGER_ZONE.z);
@@ -88,8 +134,7 @@ export function getBiomeKeyAtPosition(positionOrX, zValue = 0) {
     return "emberRidge";
   }
 
-  const originDistance = Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z);
-  if (originDistance <= ORIGIN_POOL.radius + 1.5) {
+  if (getOriginWaterFactor(x, z) >= 0.18) {
     return "originWaters";
   }
 
@@ -103,8 +148,11 @@ export function getBiomeKeyAtPosition(positionOrX, zValue = 0) {
     return "glowMarsh";
   }
 
-  const shallowsDistance = Math.hypot(x - SHALLOWS_ZONE.x, z - SHALLOWS_ZONE.z);
-  if (shallowsDistance <= SHALLOWS_ZONE.radius + 1.8 || (x < -6 && x > -41 && z > 3 && z < 31)) {
+  if (getForestFactor(x, z) >= 0.3) {
+    return "verdantForest";
+  }
+
+  if (getShallowsWaterFactor(x, z) >= 0.16) {
     return "sunlitShallows";
   }
 
@@ -122,17 +170,30 @@ export function getTerrainHeight(x, z) {
   const baseTerrain = duneA + duneB + duneC;
 
   const originDistance = Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z);
-  const originFactor = Math.max(0, 1 - originDistance / (ORIGIN_POOL.radius + 6));
-  const originLagoon = -4.6 * smoothstep(0, 1, originFactor);
+  const originFactor = smoothstep(0, 1, getOriginWaterFactor(x, z));
+  const lagoonRipple = Math.sin(x * 0.24 + z * 0.13) * 0.06 + Math.cos(z * 0.18 - x * 0.07) * 0.04;
+  const lagoonTarget = ORIGIN_POOL.surfaceY - 1.45 + lagoonRipple;
+  const lagoonShoreLift = ridgeBand(originDistance, ORIGIN_POOL.radius + 1, 3.8, 0.92);
 
   const shallowsDistance = Math.hypot(x - SHALLOWS_ZONE.x, z - SHALLOWS_ZONE.z);
-  const shallowsFactor = Math.max(0, 1 - shallowsDistance / (SHALLOWS_ZONE.radius + 7));
-  const shallowsShelf = -1.9 * smoothstep(0, 1, shallowsFactor);
+  const shallowsFactor = smoothstep(0, 1, getShallowsWaterFactor(x, z));
+  const shallowsRipple = Math.sin(x * 0.19 + z * 0.09) * 0.04 + Math.cos(z * 0.15 - x * 0.05) * 0.03;
+  const shallowsTarget = SHALLOWS_ZONE.surfaceY - 0.48 + shallowsRipple;
+  const shallowsShoreLift = ridgeBand(shallowsDistance, SHALLOWS_ZONE.radius + 0.8, 4.6, 0.72);
 
   const marshDistance = Math.hypot(x - MARSH_ZONE.x, z - MARSH_ZONE.z);
   const marshFactor = Math.max(0, 1 - marshDistance / (MARSH_ZONE.radius + 6));
   const marshFloor = -1.6 * smoothstep(0, 1, marshFactor);
   const marshHummocks = Math.sin(x * 0.18 + z * 0.05) * Math.cos(z * 0.15 - x * 0.04) * 0.32 * marshFactor;
+
+  const forestDistance = Math.hypot(x - FOREST_ZONE.x, z - FOREST_ZONE.z);
+  const forestFactor = smoothstep(0, 1, getForestFactor(x, z));
+  const forestRise = 0.95 * forestFactor;
+  const forestHummocks = (
+    Math.sin(x * 0.16 + z * 0.05) * 0.38
+    + Math.cos(z * 0.18 - x * 0.07) * 0.28
+  ) * forestFactor;
+  const forestShelf = ridgeBand(forestDistance, FOREST_ZONE.radius - 1.4, 4.6, 0.42);
 
   const saltDistance = Math.hypot(x - SALT_FLATS_ZONE.x, z - SALT_FLATS_ZONE.z);
   const saltFactor = Math.max(0, 1 - saltDistance / (SALT_FLATS_ZONE.radius + 7));
@@ -159,16 +220,20 @@ export function getTerrainHeight(x, z) {
 
   const nestDistance = Math.hypot(x - NEST_POSITION.x, z - NEST_POSITION.z);
   const nestFactor = Math.max(0, 1 - nestDistance / (NEST_POSITION.radius + 5));
-  const shorelineLift = smoothstep(-28, -8, x) * smoothstep(0, 1, 1 - Math.abs(z - 18) / 26) * 0.45;
-  const terrainWithBiomes = baseTerrain
-    + originLagoon
-    + shallowsShelf
+  const shorelineLift = smoothstep(-30, -10, x) * smoothstep(0, 1, 1 - Math.abs(z - 19) / 24) * 0.25;
+  let terrainWithBiomes = baseTerrain
     + marshFloor
     + marshHummocks
     + shorelineLift
+    + forestRise
+    + forestHummocks
+    + forestShelf
     + emberRise
     + emberMountains
     + dangerMountains;
+  terrainWithBiomes = THREE.MathUtils.lerp(terrainWithBiomes, lagoonTarget, originFactor * 0.98);
+  terrainWithBiomes = THREE.MathUtils.lerp(terrainWithBiomes, shallowsTarget, shallowsFactor * 0.92);
+  terrainWithBiomes += lagoonShoreLift + shallowsShoreLift;
   const saltFlattened = THREE.MathUtils.lerp(terrainWithBiomes, saltPanTarget, smoothstep(0, 1, saltFactor));
   const nestShelf = THREE.MathUtils.lerp(saltFlattened, 0.7, smoothstep(0, 1, nestFactor));
 
@@ -411,6 +476,119 @@ function addReedPatch(group, x, z, scale, swayNodes) {
   }
 
   group.add(patch);
+}
+
+function addGrassPatch(group, x, z, scale) {
+  const patch = new THREE.Group();
+  patch.position.set(x, getTerrainHeight(x, z) + 0.04, z);
+  patch.rotation.y = x * 0.11 + z * 0.07;
+
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(1.35 * scale, 6),
+    new THREE.MeshStandardMaterial({
+      color: grassDeepColor,
+      flatShading: true,
+      roughness: 1,
+    }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0.02;
+  ground.receiveShadow = true;
+  patch.add(ground);
+
+  const highlight = new THREE.Mesh(
+    new THREE.CircleGeometry(0.78 * scale, 6),
+    new THREE.MeshStandardMaterial({
+      color: grassBrightColor,
+      flatShading: true,
+      roughness: 1,
+    }),
+  );
+  highlight.rotation.x = -Math.PI / 2;
+  highlight.position.y = 0.05;
+  patch.add(highlight);
+
+  for (let index = 0; index < 6; index += 1) {
+    const blade = new THREE.Mesh(
+      new THREE.ConeGeometry(0.14 * scale, 0.92 * scale + (index % 3) * 0.12 * scale, 4),
+      new THREE.MeshStandardMaterial({
+        color: index % 2 === 0 ? grassBrightColor : 0x7bc25f,
+        flatShading: true,
+        roughness: 1,
+      }),
+    );
+    blade.position.set(
+      Math.cos((index / 6) * Math.PI * 2) * 0.42 * scale,
+      0.45 * scale,
+      Math.sin((index / 6) * Math.PI * 2) * 0.32 * scale,
+    );
+    blade.rotation.set(-0.08, index * 0.6, (index - 2.5) * 0.08);
+    blade.castShadow = true;
+    patch.add(blade);
+  }
+
+  group.add(patch);
+}
+
+function addCanopyTree(group, x, z, scale) {
+  const tree = new THREE.Group();
+  tree.position.set(x, getTerrainHeight(x, z), z);
+  tree.rotation.y = x * 0.08 + z * 0.05;
+
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2 * scale, 0.34 * scale, 3.2 * scale, 6),
+    new THREE.MeshStandardMaterial({
+      color: barkColor,
+      flatShading: true,
+      roughness: 1,
+    }),
+  );
+  trunk.position.y = 1.6 * scale;
+  trunk.castShadow = true;
+  trunk.receiveShadow = true;
+  tree.add(trunk);
+
+  const lowerCanopy = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1.4 * scale, 0),
+    new THREE.MeshStandardMaterial({
+      color: canopyColor,
+      flatShading: true,
+      roughness: 0.96,
+    }),
+  );
+  lowerCanopy.position.set(0, 3.2 * scale, 0);
+  lowerCanopy.scale.set(1.25, 0.82, 1.05);
+  lowerCanopy.castShadow = true;
+  lowerCanopy.receiveShadow = true;
+  tree.add(lowerCanopy);
+
+  const upperCanopy = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(1.05 * scale, 0),
+    new THREE.MeshStandardMaterial({
+      color: 0x97d973,
+      flatShading: true,
+      roughness: 0.95,
+    }),
+  );
+  upperCanopy.position.set(0.12 * scale, 4.45 * scale, -0.04 * scale);
+  upperCanopy.scale.set(1.08, 0.88, 1.02);
+  upperCanopy.castShadow = true;
+  tree.add(upperCanopy);
+
+  const root = new THREE.Mesh(
+    new THREE.ConeGeometry(0.52 * scale, 0.9 * scale, 5),
+    new THREE.MeshStandardMaterial({
+      color: 0x5b452f,
+      flatShading: true,
+      roughness: 1,
+    }),
+  );
+  root.position.y = 0.36 * scale;
+  root.scale.set(1.1, 0.46, 1.1);
+  root.castShadow = true;
+  tree.add(root);
+
+  group.add(tree);
 }
 
 function addCoralCluster(group, x, z, scale) {
@@ -752,9 +930,14 @@ function createSunHalo() {
   return halo;
 }
 
-function createWaterSurface(radius, color, opacity) {
+function createWaterSurface(radius, color, opacity, {
+  scaleX = 1,
+  scaleZ = 1,
+  rotation = 0,
+  segments = 56,
+} = {}) {
   const surface = new THREE.Mesh(
-    new THREE.CircleGeometry(radius, 56),
+    new THREE.CircleGeometry(radius, segments),
     new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -763,8 +946,33 @@ function createWaterSurface(radius, color, opacity) {
       side: THREE.DoubleSide,
     }),
   );
-  surface.rotation.x = -Math.PI / 2;
+  surface.quaternion.setFromAxisAngle(yAxis, rotation);
+  surface.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
+  surface.scale.set(scaleX, 1, scaleZ);
   return surface;
+}
+
+function createWaterEdge(innerRadius, outerRadius, color, opacity, {
+  scaleX = 1,
+  scaleZ = 1,
+  rotation = 0,
+  segments = 56,
+} = {}) {
+  const edge = new THREE.Mesh(
+    new THREE.RingGeometry(innerRadius, outerRadius, segments),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      fog: false,
+    }),
+  );
+  edge.quaternion.setFromAxisAngle(yAxis, rotation);
+  edge.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
+  edge.scale.set(scaleX, 1, scaleZ);
+  return edge;
 }
 
 function createSkyCloud({
@@ -1041,14 +1249,24 @@ export function buildWorld(scene) {
     const edgeFade = THREE.MathUtils.clamp(Math.hypot(x, z) / WORLD_RADIUS, 0, 1);
     tempColor.set(sandColor).lerp(new THREE.Color(shadowSandColor), edgeFade * 0.45);
 
-    const originFactor = Math.max(0, 1 - Math.hypot(x - ORIGIN_POOL.x, z - ORIGIN_POOL.z) / (ORIGIN_POOL.radius + 5));
-    const shallowsFactor = Math.max(0, 1 - Math.hypot(x - SHALLOWS_ZONE.x, z - SHALLOWS_ZONE.z) / (SHALLOWS_ZONE.radius + 5));
+    const originFactor = smoothstep(0, 1, getOriginWaterFactor(x, z));
+    const shallowsFactor = smoothstep(0, 1, getShallowsWaterFactor(x, z));
+    const forestFactor = smoothstep(0, 1, getForestFactor(x, z));
     const marshFactor = Math.max(0, 1 - Math.hypot(x - MARSH_ZONE.x, z - MARSH_ZONE.z) / (MARSH_ZONE.radius + 4));
     const saltFactor = Math.max(0, 1 - Math.hypot(x - SALT_FLATS_ZONE.x, z - SALT_FLATS_ZONE.z) / (SALT_FLATS_ZONE.radius + 5));
     const emberFactor = Math.max(0, 1 - Math.hypot(x - EMBER_RIDGE_ZONE.x, z - EMBER_RIDGE_ZONE.z) / (EMBER_RIDGE_ZONE.radius + 6));
-    tempColor.lerp(new THREE.Color(0x86b9a4), originFactor * 0.74);
-    tempColor.lerp(new THREE.Color(0xb7d5b8), shallowsFactor * 0.28);
+    const waterFactor = clamp(Math.max(originFactor, shallowsFactor), 0, 1);
+    const shoreFactor = clamp(
+      smoothstep(0.06, 0.3, waterFactor) * (1 - smoothstep(0.38, 0.84, waterFactor)),
+      0,
+      1,
+    );
+    tempColor.lerp(new THREE.Color(0xe8d9aa), shoreFactor * 0.72);
+    tempColor.lerp(new THREE.Color(0x4caeb4), originFactor * 0.88);
+    tempColor.lerp(new THREE.Color(0x8adbcf), shallowsFactor * 0.82);
     tempColor.lerp(new THREE.Color(0x7a8660), marshFactor * 0.5);
+    tempColor.lerp(new THREE.Color(grassBrightColor), forestFactor * 0.96);
+    tempColor.lerp(new THREE.Color(grassDeepColor), forestFactor * 0.58);
     tempColor.lerp(new THREE.Color(0xd9e3cf), saltFactor * 0.72);
     tempColor.lerp(new THREE.Color(0xa95e47), emberFactor * 0.64);
 
@@ -1077,13 +1295,70 @@ export function buildWorld(scene) {
   const nest = addNest(world);
   const dangerMarker = addDangerMarker(world);
 
-  const deepLagoon = createWaterSurface(ORIGIN_POOL.radius * 1.06, 0x5bbdb8, 0.3);
-  deepLagoon.position.set(ORIGIN_POOL.x, ORIGIN_POOL.surfaceY, ORIGIN_POOL.z);
-  world.add(deepLagoon);
+  const waterSurfaces = [];
+  const registerWaterSurface = (mesh, baseY, drift, scale, phase) => {
+    mesh.userData.baseScale = mesh.scale.clone();
+    mesh.userData.baseOpacity = mesh.material.opacity;
+    world.add(mesh);
+    waterSurfaces.push({
+      mesh,
+      baseY,
+      drift,
+      scale,
+      phase,
+      baseScale: mesh.userData.baseScale.clone(),
+      baseOpacity: mesh.userData.baseOpacity,
+    });
+    return mesh;
+  };
 
-  const shorelineWater = createWaterSurface(SHALLOWS_ZONE.radius * 0.94, 0x8fd8c8, 0.16);
-  shorelineWater.position.set(SHALLOWS_ZONE.x, ORIGIN_POOL.surfaceY + 0.18, SHALLOWS_ZONE.z);
-  world.add(shorelineWater);
+  const lagoonCore = registerWaterSurface(
+    createWaterSurface(ORIGIN_POOL.radius * 0.84, 0x48aeb1, 0.34, { scaleX: 1.02, scaleZ: 0.92 }),
+    ORIGIN_POOL.surfaceY + 0.02,
+    0.05,
+    0.018,
+    0,
+  );
+  lagoonCore.position.set(ORIGIN_POOL.x, ORIGIN_POOL.surfaceY + 0.02, ORIGIN_POOL.z);
+
+  const lagoonEdge = createWaterEdge(ORIGIN_POOL.radius * 0.86, ORIGIN_POOL.radius * 1.02, 0xf2fffb, 0.18, {
+    scaleX: 1.04,
+    scaleZ: 0.94,
+  });
+  lagoonEdge.position.set(ORIGIN_POOL.x, ORIGIN_POOL.surfaceY + 0.12, ORIGIN_POOL.z);
+  world.add(lagoonEdge);
+
+  const channelAngle = Math.atan2((SHALLOWS_ZONE.z - 1.6) - (ORIGIN_POOL.z - 0.2), (SHALLOWS_ZONE.x + 6.2) - (ORIGIN_POOL.x + 1.2));
+  const estuaryRibbon = registerWaterSurface(
+    createWaterSurface(5.1, 0x8bded3, 0.12, {
+      scaleX: 2.6,
+      scaleZ: 0.5,
+      rotation: channelAngle,
+    }),
+    -0.86,
+    0.024,
+    0.008,
+    1.5,
+  );
+  estuaryRibbon.position.set(-22.8, -0.86, 19.8);
+
+  const shallowsPool = registerWaterSurface(
+    createWaterSurface(SHALLOWS_ZONE.radius * 0.48, 0x8ce3d0, 0.17, { scaleX: 1.08, scaleZ: 0.66, rotation: -0.18 }),
+    SHALLOWS_ZONE.surfaceY + 0.03,
+    0.024,
+    0.012,
+    3,
+  );
+  shallowsPool.position.set(SHALLOWS_ZONE.x - 0.8, SHALLOWS_ZONE.surfaceY + 0.03, SHALLOWS_ZONE.z - 0.2);
+
+  const shallowsEdge = createWaterEdge(SHALLOWS_ZONE.radius * 0.4, SHALLOWS_ZONE.radius * 0.52, 0xf3fffc, 0.14, {
+    scaleX: 1.08,
+    scaleZ: 0.66,
+    rotation: -0.18,
+    segments: 52,
+  });
+  shallowsEdge.position.set(SHALLOWS_ZONE.x - 0.8, SHALLOWS_ZONE.surfaceY + 0.08, SHALLOWS_ZONE.z - 0.2);
+  world.add(shallowsEdge);
 
   const waterfalls = WATERFALL_DEFS.map((definition) => createWaterfallFeature(definition));
   waterfalls.forEach((waterfall) => {
@@ -1195,6 +1470,36 @@ export function buildWorld(scene) {
   ].forEach(([x, z, scale]) => addReedPatch(world, x, z, scale, swayNodes));
 
   [
+    [6, 36, 1.34],
+    [10, 35, 1.46],
+    [9, 32, 1.18],
+    [13, 39, 1.28],
+    [18, 35, 1.36],
+    [23, 40, 1.22],
+    [26, 33, 1.16],
+    [15, 29, 1.05],
+    [21, 30, 1.08],
+    [14, 34, 1.22],
+    [17, 32, 1.12],
+  ].forEach(([x, z, scale]) => addGrassPatch(world, x, z, scale));
+
+  [
+    [10, 35, 1.08],
+    [14, 41, 1.2],
+    [19, 37, 1.26],
+    [24, 35, 1.18],
+    [21, 42, 1.14],
+    [12, 30, 1.02],
+    [26, 39, 1.08],
+  ].forEach(([x, z, scale]) => addCanopyTree(world, x, z, scale));
+
+  [
+    [16, 34, 0.92, 0.8, 0x6f5f46],
+    [23, 31, 0.86, 2.1, 0x665239],
+    [9, 41, 0.8, 1.3, 0x6a5d44],
+  ].forEach(([x, z, scale, rotation, tint]) => addRockCluster(world, x, z, scale, rotation, tint));
+
+  [
     [-35, -22, 0.92],
     [-30, -29, 0.84],
     [-24, -18, 0.86],
@@ -1239,6 +1544,19 @@ export function buildWorld(scene) {
     size: 0.18,
   });
   world.add(marshMotes);
+
+  const forestMotes = createZoneParticles({
+    count: 62,
+    centerX: FOREST_ZONE.x,
+    centerZ: FOREST_ZONE.z,
+    radius: FOREST_ZONE.radius + 3,
+    color: 0x98ee8f,
+    altColor: 0xe9ffd8,
+    minHeight: 0.8,
+    maxHeight: 4.6,
+    size: 0.16,
+  });
+  world.add(forestMotes);
 
   const saltMotes = createZoneParticles({
     count: 72,
@@ -1431,7 +1749,7 @@ export function buildWorld(scene) {
 
   scene.add(world);
 
-  const zoneParticles = [nestMotes, originMotes, marshMotes, saltMotes, dangerEmbers, emberMotes];
+  const zoneParticles = [nestMotes, originMotes, marshMotes, forestMotes, saltMotes, dangerEmbers, emberMotes];
   waterfalls.forEach((waterfall) => zoneParticles.push(waterfall.mist));
 
   return {
@@ -1442,10 +1760,7 @@ export function buildWorld(scene) {
     nestRing: nest.safeRing,
     dangerRing: dangerMarker.ring,
     zoneParticles,
-    waterSurfaces: [
-      { mesh: deepLagoon, baseY: ORIGIN_POOL.surfaceY, drift: 0.06, scale: 0.02, phase: 0 },
-      { mesh: shorelineWater, baseY: ORIGIN_POOL.surfaceY + 0.18, drift: 0.04, scale: 0.015, phase: 1.1 },
-    ],
+    waterSurfaces,
     waterfalls,
     waterfallBasins: waterfalls.map((waterfall) => waterfall.basin),
     sunHalo,
