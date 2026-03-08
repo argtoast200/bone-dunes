@@ -74,6 +74,19 @@ const initialState = {
     worldRadius: 58,
     player: { x: 0, z: 0, yaw: Math.PI },
     nest: { dx: 0, dz: 0, distance: 0, bearing: 0, atNest: true },
+    target: null,
+  },
+  journey: {
+    key: "feedNursery",
+    index: 1,
+    total: 8,
+    stepLabel: "Journey 1/8",
+    title: "Feed The Nursery",
+    summary: "Feed in the origin waters until the line has enough mass to leave the cradle.",
+    detail: "DNA 0/6 • Growth 0%",
+    progress: 0,
+    target: { key: "originWaters", label: "Origin Waters", distance: 0, bearing: 0 },
+    complete: false,
   },
   nearbySpecies: [],
   nearbyNests: [],
@@ -210,12 +223,13 @@ function HudMeter({ label, value, fill, tone = "health", detail = null }) {
   );
 }
 
-function MiniMap({ hudMap, zone, biomeName }) {
+function MiniMap({ hudMap, zone, biomeName, journey }) {
   const center = 70;
   const radius = 48;
   const safeHudMap = hudMap ?? initialState.hudMap;
   const playerYaw = safeHudMap.player?.yaw ?? Math.PI;
   const nest = safeHudMap.nest ?? initialState.hudMap.nest;
+  const target = safeHudMap.target;
   const range = Math.max(14, safeHudMap.range ?? 26);
   const localX = (nest.dx / range) * radius;
   const localY = (-nest.dz / range) * radius;
@@ -225,14 +239,32 @@ function MiniMap({ hudMap, zone, biomeName }) {
   const nestX = center + localX * scale;
   const nestY = center + localY * scale;
   const bearing = getBearingLabel(nest.bearing ?? 0);
+  const targetLocalX = target ? (target.dx / range) * radius : 0;
+  const targetLocalY = target ? (-target.dz / range) * radius : 0;
+  const targetDistance = target ? Math.hypot(targetLocalX, targetLocalY) : 0;
+  const targetScale = targetDistance > rim && targetDistance > 0.001 ? rim / targetDistance : 1;
+  const targetX = center + targetLocalX * targetScale;
+  const targetY = center + targetLocalY * targetScale;
+  const targetBearing = getBearingLabel(target?.bearing ?? 0);
   const biomeBadge = biomeName?.split(" ").slice(0, 2).join(" ") ?? "Dunes";
+  const showTarget = target && !target.atTarget && target.key !== "nest";
+  const routeLabel = journey?.target?.label ?? target?.label ?? journey?.title ?? "Current route";
+  const routeDetail = target
+    ? target.atTarget
+      ? journey?.detail ?? `${routeLabel} reached`
+      : `${routeLabel} ${Math.round(target.distance)}m ${targetBearing}`
+    : journey?.detail
+      ? journey.detail
+      : journey?.complete
+      ? "Route complete"
+      : routeLabel;
 
   return (
     <section className="mini-map-card">
       <div className="mini-map-copy">
         <p className="eyebrow">Nest Route</p>
         <strong>{nest.atNest ? "At species nest" : `Nest ${Math.round(nest.distance)}m ${bearing}`}</strong>
-        <small>{zone === "danger" ? "Danger pressure rises away from home." : biomeName}</small>
+        <small>{routeDetail}</small>
       </div>
 
       <div className="mini-map-frame">
@@ -241,6 +273,17 @@ function MiniMap({ hudMap, zone, biomeName }) {
           <circle cx="70" cy="70" r="48" className="mini-map-core" />
           <circle cx="70" cy="22" r="2" className="mini-map-north-tick" />
           <circle cx="70" cy="70" r="2.5" className="mini-map-center" />
+          {showTarget && (
+            <>
+              <line x1="70" y1="70" x2={targetX} y2={targetY} className="mini-map-target-line" />
+              <circle cx={targetX} cy={targetY} r={4.8} className="mini-map-target-dot" />
+              {targetDistance > rim && (
+                <g transform={`translate(${targetX} ${targetY}) rotate(${(Math.atan2(targetLocalX, -targetLocalY) * 180) / Math.PI})`}>
+                  <path d="M0,-9 L4,2 L0,-1 L-4,2 Z" className="mini-map-target-arrow" />
+                </g>
+              )}
+            </>
+          )}
           <circle cx={nestX} cy={nestY} r={nest.atNest ? 7 : 5.5} className="mini-map-nest-dot" />
           {distance > rim && (
             <g transform={`translate(${nestX} ${nestY}) rotate(${(Math.atan2(localX, -localY) * 180) / Math.PI})`}>
@@ -307,6 +350,7 @@ export function GameApp() {
   const draftBaseIdentity = uiState.evolutionDraft?.baseIdentity ?? activeIdentity;
   const healthPct = uiState.maxHealth > 0 ? (uiState.health / uiState.maxHealth) * 100 : 0;
   const socialHint = uiState.socialHint;
+  const journey = uiState.journey ?? initialState.journey;
   const biteStatus = uiState.attackPhase === "windup"
     ? "Coiling"
     : uiState.attackPhase === "strike"
@@ -334,7 +378,7 @@ export function GameApp() {
     ? "A jump • X/RB/RT bite • B or LB sprint • D-pad navigates menus • Start opens pause • View opens Creature Evolution at the nest"
     : "Shift sprint • Q/E/R social • Space or right click bite • F fullscreen";
 
-  let contextPrompt = "Gather DNA in the dunes, then return to the nest to evolve.";
+  let contextPrompt = journey.summary;
   if (socialHint && socialHint.status !== "friendly" && socialHint.distance <= 9 && !uiState.canOpenEditor) {
     contextPrompt = `Near ${socialHint.speciesName}. Hit ${socialHint.expectedHotkey} to ${socialHint.expectedVerb.toLowerCase()} and finish the pattern to befriend them.`;
   } else if (socialHint && socialHint.status === "friendly" && !uiState.canOpenEditor) {
@@ -393,7 +437,7 @@ export function GameApp() {
                   </div>
                 </section>
 
-                <MiniMap hudMap={uiState.hudMap} zone={uiState.zone} biomeName={uiState.biomeName} />
+                <MiniMap hudMap={uiState.hudMap} zone={uiState.zone} biomeName={uiState.biomeName} journey={journey} />
               </div>
 
               <div className="vitals-stack">
@@ -425,9 +469,15 @@ export function GameApp() {
 
               <div className="context-strip">
                 <div>
-                  <p className="eyebrow">Focus</p>
-                  <strong>{contextPrompt}</strong>
-                  <small>
+                  <p className="eyebrow">{journey.stepLabel}</p>
+                  <strong>{journey.title}</strong>
+                  <p className="journey-detail">{journey.summary}</p>
+                  <div className="journey-progress">
+                    <span style={{ width: `${clamp(journey.progress ?? 0, 0, 100)}%` }} />
+                  </div>
+                  {journey.detail && <small className="journey-detail-row">{journey.detail}</small>}
+                  <small>{contextPrompt}</small>
+                  <small className="journey-controls">
                     {uiState.gamepadConnected ? "Controller live." : "Keyboard and mouse live."}
                     {" "}
                     {liveControls}
@@ -436,33 +486,27 @@ export function GameApp() {
                     <span className={`context-chip ${uiState.biomeUnlocked ? "friendly" : "hostile"}`}>
                       {uiState.biomeName}
                     </span>
-                    <span className="context-chip">
-                      Path
-                      {" "}
-                      {uiState.pathShortLabel}
-                    </span>
-                    <span className="context-chip">
-                      Dominant
-                      {" "}
-                      {uiState.dominantBiomeName}
-                    </span>
+                    {journey.target && (
+                      <span className="context-chip friendly">
+                        Route
+                        {" "}
+                        {journey.target.label}
+                      </span>
+                    )}
                     <span className={`context-chip ${uiState.shoreReadiness >= 58 ? "friendly" : "hostile"}`}>
                       {uiState.shoreLabel}
                     </span>
-                    {uiState.nextBiomeUnlock && (
+                    <span className="context-chip">
+                      {journey.progress}
+                      % route
+                    </span>
+                    {uiState.nextBiomeUnlock && !journey.complete && (
                       <span className="context-chip">
                         Next
                         {" "}
                         {uiState.nextBiomeUnlock.label}
                       </span>
                     )}
-                    <span className="context-chip">
-                      Blueprints
-                      {" "}
-                      {uiState.blueprintSummary.unlocked}
-                      /
-                      {uiState.blueprintSummary.total}
-                    </span>
                     {socialHint && (
                       <span className={`context-chip ${socialHint.status}`}>
                         {socialHint.status === "friendly" ? "Friendly" : socialHint.status === "hostile" ? "Hostile" : "Wary"}
@@ -478,6 +522,13 @@ export function GameApp() {
                         )}
                       </span>
                     )}
+                    <span className="context-chip">
+                      Blueprints
+                      {" "}
+                      {uiState.blueprintSummary.unlocked}
+                      /
+                      {uiState.blueprintSummary.total}
+                    </span>
                   </div>
                 </div>
                 {uiState.canOpenEditor && (
@@ -545,8 +596,8 @@ export function GameApp() {
 
                 <div className="menu-grid">
                   <div className="menu-panel">
-                    <h3>Core Loop</h3>
-                    <p>Feed in the origin waters beside tide skimmers. Push into shallows, marsh, forest, dunes, salt flats, basin, and ember ridges. Unlock blueprints. Return to the nest. Lay the egg. Raise the newborn.</p>
+                    <h3>Trajectory</h3>
+                    <p>Feed in the origin waters. Break into the shallows. Choose forest or marsh. Return to the nest, shape the egg, hatch the next body, then raise it into the Bone Dunes and apex frontiers.</p>
                   </div>
                   <div className="menu-panel">
                     <h3>Controls</h3>

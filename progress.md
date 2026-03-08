@@ -861,3 +861,46 @@ Additional biome pass:
     - fresh autostart still begins in `Origin Waters`
     - teleport validation at `(10, 35)` now reports biome key `verdantForest`
     - no browser console errors beyond the React DevTools info banner
+
+## 2026-03-07 Guided Trajectory Pass
+
+- Current request:
+  - give the game a clearer trajectory and objective path without turning it into a linear level
+- Implemented:
+  - added a lightweight 8-step species journey in `src/game/SporeSliceGame.js` that sits on top of the existing open world instead of replacing it:
+    - feed the nursery
+    - reach the shallows
+    - choose marsh or forest
+    - shape the next egg
+    - lay the egg
+    - raise the hatchling
+    - claim the Bone Dunes
+    - push the apex frontier
+  - the journey derives from the existing save/evolution state rather than introducing a new progression save schema, so old saves can snap to the step that matches their current species state
+  - added journey state to `render_game_to_text()` and the live HUD payload so the UI can show the current milestone, progress, and a route target
+  - rebuilt the lower-left guidance card in `src/game/GameApp.jsx` around:
+    - the current journey step label/title
+    - a short summary
+    - a progress bar
+    - a concrete detail line (`DNA 2/6`, `11m to the first shore break`, `Bone Dunes mastery 2/5`, etc.)
+  - upgraded the minimap so it can show route targets and route copy instead of only the nest beacon
+  - updated the start-menu framing from a generic loop pitch to a clear species trajectory
+  - fixed a real pathing bug uncovered in browser validation: the original Sunlit Shallows route point landed inside marsh overlap, so the second milestone could point to the wrong biome; the shallows target now lands on an actual `sunlitShallows` position
+- Validation:
+  - `npm run build` passes after the trajectory pass
+  - standalone web-game client artifacts reviewed:
+    - `output/web-game/journey-pass-1/shot-0.png`
+    - `output/web-game/journey-pass-1/state-0.json`
+  - interactive browser capture:
+    - `output/web-game/journey-pass-2/live-hud.png`
+  - visual inspection:
+    - the HUD now reads like a route card instead of a vague status panel
+    - the first milestone no longer implies a pure travel goal when the player is already in the origin waters; it now exposes the real sub-goal directly in the card/minimap
+  - deterministic/browser checks:
+    - fresh reset state reports `Journey 1/8` with `Feed The Nursery`
+    - after forcing `DNA = 6`, the route advances to `Reach The Sunlit Shallows`
+    - after moving the player to the corrected shallows point `(-17, 16)`, the route advances to the branch-choice step (`Choose Verdant Forest` on the tested alignment)
+    - advanced save state at the nest correctly resumes on later journey steps instead of restarting at the beginning
+    - no browser console errors beyond the React DevTools info banner
+- Notes / TODO:
+  - the standalone `$WEB_GAME_CLIENT` still intermittently hangs on exit in this environment even when the local server is healthy; use the generated artifacts plus the interactive Playwright browser for final validation when that happens

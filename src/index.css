@@ -336,8 +336,24 @@ button {
   stroke-width: 2;
 }
 
+.mini-map-target-line {
+  stroke: rgba(156, 231, 133, 0.42);
+  stroke-width: 2;
+  stroke-dasharray: 4 5;
+}
+
+.mini-map-target-dot {
+  fill: rgba(156, 231, 133, 0.96);
+  stroke: rgba(243, 255, 236, 0.72);
+  stroke-width: 2;
+}
+
 .mini-map-rim-arrow {
   fill: rgba(255, 207, 138, 0.96);
+}
+
+.mini-map-target-arrow {
+  fill: rgba(156, 231, 133, 0.96);
 }
 
 .mini-map-zone {
@@ -455,9 +471,43 @@ button {
   font-size: 1rem;
 }
 
+.journey-detail {
+  margin: 0 0 8px;
+  color: rgba(248, 234, 209, 0.86);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.journey-progress {
+  width: min(320px, 100%);
+  height: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: rgba(255, 243, 221, 0.08);
+}
+
+.journey-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #9ef8df, #b6ec7c);
+  transition: width 180ms ease;
+}
+
 .context-strip small {
   display: block;
   font-size: 0.74rem;
+}
+
+.journey-detail-row {
+  margin-bottom: 6px;
+  color: rgba(182, 236, 124, 0.9);
+}
+
+.journey-controls {
+  margin-top: 6px;
+  opacity: 0.84;
 }
 
 .context-chip-row,

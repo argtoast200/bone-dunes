@@ -4,11 +4,15 @@ import {
   BIOME_DEFS,
   DANGER_ZONE,
   ENEMY_DEFS,
+  EMBER_RIDGE_ZONE,
+  FOREST_ZONE,
   FOOD_SPAWNS,
+  MARSH_ZONE,
   MIGRATION_EVENT_DEFS,
   NEST_POSITION,
   ORIGIN_POOL,
   PLAYER_BASE_STATS,
+  SHALLOWS_ZONE,
   SPECIES_DEFS,
   UPGRADE_DEFS,
   WORLD_RADIUS,
@@ -90,6 +94,8 @@ const HUD_MAP_RANGE = 26;
 const SPECIES_DISPLAY_NAME = "Boney Snapper";
 const BABY_STAGE_THRESHOLD = 0.35;
 const ELDER_KILL_TARGET = 8;
+const JOURNEY_STEP_COUNT = 8;
+const BONE_DUNES_ROUTE_POINT = { x: 6, z: 10, label: "Bone Dunes" };
 const SOCIAL_INTERACT_RANGE = 8.4;
 const SOCIAL_CHAIN_WINDOW = 5.5;
 const SOCIAL_COOLDOWN = 0.85;
@@ -247,6 +253,53 @@ function getSpawnOffset(radius) {
 
 function getDistance2D(a, b) {
   return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
+function getDistanceProgress(distance, nearDistance = 6, farDistance = 44) {
+  if (!Number.isFinite(distance)) {
+    return 0;
+  }
+  if (distance <= nearDistance) {
+    return 1;
+  }
+  return clamp(1 - (distance - nearDistance) / Math.max(1, farDistance - nearDistance), 0.06, 0.94);
+}
+
+function getJourneyTargetPosition(targetKey) {
+  switch (targetKey) {
+    case "originWaters":
+      return { x: ORIGIN_POOL.x, z: ORIGIN_POOL.z, label: BIOME_DEFS.originWaters.label };
+    case "sunlitShallows":
+      return { x: SHALLOWS_ZONE.x - 1, z: SHALLOWS_ZONE.z - 2, label: BIOME_DEFS.sunlitShallows.label };
+    case "glowMarsh":
+      return { x: MARSH_ZONE.x, z: MARSH_ZONE.z, label: BIOME_DEFS.glowMarsh.label };
+    case "verdantForest":
+      return { x: FOREST_ZONE.x, z: FOREST_ZONE.z, label: BIOME_DEFS.verdantForest.label };
+    case "boneDunes":
+      return { ...BONE_DUNES_ROUTE_POINT };
+    case "jawBasin":
+      return { x: DANGER_ZONE.x, z: DANGER_ZONE.z, label: BIOME_DEFS.jawBasin.label };
+    case "emberRidge":
+      return { x: EMBER_RIDGE_ZONE.x, z: EMBER_RIDGE_ZONE.z, label: BIOME_DEFS.emberRidge.label };
+    case "nest":
+    default:
+      return { x: NEST_POSITION.x, z: NEST_POSITION.z, label: "Species Nest" };
+  }
+}
+
+function getYoungestCreature(creatures = []) {
+  return creatures.reduce((youngest, creature) => {
+    if (!youngest) {
+      return creature;
+    }
+    if ((creature.generation ?? 0) > (youngest.generation ?? 0)) {
+      return creature;
+    }
+    if ((creature.generation ?? 0) === (youngest.generation ?? 0) && (creature.createdAt ?? 0) > (youngest.createdAt ?? 0)) {
+      return creature;
+    }
+    return youngest;
+  }, null);
 }
 
 function computeRunScore({ sessionDna, scavengersDefeated, predatorsDefeated, herbivoresDefeated, timeAlive }) {
@@ -1494,6 +1547,7 @@ export class SporeSliceGame {
       respawnTimer: 0,
       biome: getBiomeKeyAtPosition(NEST_POSITION),
     };
+    this.currentJourney = null;
 
     this.playerStats = computePlayerStats(this.state.upgrades, this.state.creatureProfile);
     this.input = {
@@ -1609,6 +1663,7 @@ export class SporeSliceGame {
     this.scene.add(this.player.group);
     this.scene.add(this.moveTargetMarker.group);
     this.resetPlayerToNest(true);
+    this.refreshJourneyState(this.getCurrentBiome(this.player.group.position), { announce: false });
     this.applyUpgradeVisuals();
     this.persistProgress();
     this.resize = this.resize.bind(this);
@@ -2751,6 +2806,212 @@ export class SporeSliceGame {
     };
   }
 
+  getJourneyBranchBiomeKey() {
+    const alignment = this.state.alignment ?? DEFAULT_ALIGNMENT;
+    if ((alignment.social + alignment.adaptive) >= alignment.aggressive) {
+      return "verdantForest";
+    }
+    return "glowMarsh";
+  }
+
+  getJourneyApexBiomeKey() {
+    const pathKey = this.playerStats.path?.key ?? "nestling";
+    if (pathKey === "basinBruiser") {
+      return "emberRidge";
+    }
+    return "jawBasin";
+  }
+
+  getJourneyState(currentBiome = this.currentBiome ?? this.getCurrentBiome(this.player.group.position)) {
+    const playerPosition = this.player.group.position;
+    const activeCreature = this.getActiveCreature();
+    const speciesCreatures = this.saveData.speciesCreatures ?? [];
+    const youngestCreature = getYoungestCreature(speciesCreatures);
+    const draftModified = this.isDraftModified();
+    const branchBiomeKey = this.getJourneyBranchBiomeKey();
+    const branchBiome = BIOME_DEFS[branchBiomeKey] ?? BIOME_DEFS.glowMarsh;
+    const apexBiomeKey = this.getJourneyApexBiomeKey();
+    const apexBiome = BIOME_DEFS[apexBiomeKey] ?? BIOME_DEFS.jawBasin;
+    const discoveredBiomes = this.saveData.biomeProgress?.discoveredBiomes ?? [];
+    const masteredDunes = (this.saveData.biomeProgress?.mastery?.boneDunes ?? 0) >= 5;
+    const branchReached = discoveredBiomes.includes("glowMarsh") || discoveredBiomes.includes("verdantForest");
+    const dunesReached = discoveredBiomes.includes("boneDunes") || currentBiome.key === "boneDunes";
+    const apexReached = this.isBiomeUnlocked("jawBasin") || this.isBiomeUnlocked("emberRidge");
+    const youngestReady = youngestCreature && youngestCreature.generation > 1
+      ? youngestCreature.growth >= BABY_STAGE_THRESHOLD || (youngestCreature.killCount ?? 0) > 0
+      : false;
+    const targetRoute = (targetKey) => {
+      const point = getJourneyTargetPosition(targetKey);
+      const distance = getDistance2D(playerPosition, point);
+      return {
+        key: targetKey,
+        label: point.label,
+        x: point.x,
+        z: point.z,
+        distance,
+        bearing: Math.atan2(point.x - playerPosition.x, point.z - playerPosition.z),
+      };
+    };
+    const makeStep = ({ key, index, title, summary, detail = "", progress, targetKey }) => {
+      const target = targetKey ? targetRoute(targetKey) : null;
+      return {
+        key,
+        index,
+        total: JOURNEY_STEP_COUNT,
+        stepLabel: `Journey ${index}/${JOURNEY_STEP_COUNT}`,
+        title,
+        summary,
+        detail,
+        progress: Math.round(clamp(progress, 0, 1) * 100),
+        target,
+        complete: false,
+      };
+    };
+
+    if ((this.state.dna ?? 0) < 6 && (activeCreature?.growth ?? 0) < 0.3) {
+      return makeStep({
+        key: "feedNursery",
+        index: 1,
+        title: "Feed The Nursery",
+        summary: "Feed in the origin waters until the line has enough mass to leave the cradle.",
+        detail: `DNA ${Math.round(this.state.dna ?? 0)}/6 • Growth ${Math.round(clamp(((activeCreature?.growth ?? 0) / 0.3) * 100, 0, 100))}%`,
+        progress: Math.max((this.state.dna ?? 0) / 6, (activeCreature?.growth ?? 0) / 0.3),
+        targetKey: "originWaters",
+      });
+    }
+
+    if (currentBiome.key !== "sunlitShallows") {
+      const target = targetRoute("sunlitShallows");
+      return makeStep({
+        key: "reachShallows",
+        index: 2,
+        title: "Reach The Sunlit Shallows",
+        summary: "Follow the shoreline east and test the first route out of the nursery pool.",
+        detail: `${Math.round(target.distance)}m to the first shore break`,
+        progress: getDistanceProgress(target.distance, 5, 36),
+        targetKey: "sunlitShallows",
+      });
+    }
+
+    if (!branchReached) {
+      const target = targetRoute(branchBiomeKey);
+      return makeStep({
+        key: "chooseFrontier",
+        index: 3,
+        title: `Choose ${branchBiome.label}`,
+        summary: branchBiomeKey === "verdantForest"
+          ? "Push into the greener cover route and prove the line can handle rooted land."
+          : "Push into Glow Marsh and prove the line can survive soft, hostile ground.",
+        detail: `${Math.round(target.distance)}m to ${branchBiome.label}`,
+        progress: getDistanceProgress(target.distance, 6, 44),
+        targetKey: branchBiomeKey,
+      });
+    }
+
+    if (!draftModified) {
+      return makeStep({
+        key: "shapeEgg",
+        index: 4,
+        title: "Shape The Next Egg",
+        summary: "Return to the species nest, open Creature Evolution, and spend DNA on a real body change.",
+        detail: this.state.zone === "nest"
+          ? "At the nest: open Creature Evolution and spend DNA"
+          : `${Math.round(getDistance2D(playerPosition, NEST_POSITION))}m back to the species nest`,
+        progress: this.state.zone === "nest" ? 0.62 : Math.max(getDistanceProgress(getDistance2D(playerPosition, NEST_POSITION), 5, 42) * 0.55, clamp((this.state.dna ?? 0) / 18, 0, 0.48)),
+        targetKey: "nest",
+      });
+    }
+
+    if (speciesCreatures.length < 2) {
+      return makeStep({
+        key: "layEgg",
+        index: 5,
+        title: "Lay The Egg",
+        summary: "Switch to the Species tab at the nest and hatch the new body into the world.",
+        detail: this.state.zone === "nest"
+          ? "At the nest: switch to Species and hatch the next body"
+          : `${Math.round(getDistance2D(playerPosition, NEST_POSITION))}m back to the species nest`,
+        progress: this.state.zone === "nest" ? 0.78 : getDistanceProgress(getDistance2D(playerPosition, NEST_POSITION), 5, 42) * 0.6,
+        targetKey: "nest",
+      });
+    }
+
+    if (!youngestReady) {
+      return makeStep({
+        key: "raiseYoung",
+        index: 6,
+        title: "Raise The Hatchling",
+        summary: "Control the newest body in the origin waters until it reaches adolescence or scores a clean kill.",
+        detail: youngestCreature && youngestCreature.generation > 1
+          ? `Growth ${Math.round(clamp((youngestCreature.growth / BABY_STAGE_THRESHOLD) * 100, 0, 100))}% • ${Math.min(1, youngestCreature.killCount ?? 0)}/1 clean kill`
+          : "Hatch the new body and return it to the nursery waters",
+        progress: youngestCreature && youngestCreature.generation > 1
+          ? Math.max(
+            clamp(youngestCreature.growth / BABY_STAGE_THRESHOLD, 0, 1),
+            (youngestCreature.killCount ?? 0) > 0 ? 1 : 0,
+          )
+          : 0,
+        targetKey: "originWaters",
+      });
+    }
+
+    if (!masteredDunes && !dunesReached && !apexReached) {
+      const target = targetRoute("boneDunes");
+      return makeStep({
+        key: "claimDunes",
+        index: 7,
+        title: "Claim The Bone Dunes",
+        summary: "Take the stronger body into open sand and prove the line can live beyond the shoreline.",
+        detail: `Bone Dunes mastery ${Math.round(this.saveData.biomeProgress?.mastery?.boneDunes ?? 0)}/5`,
+        progress: Math.max((this.saveData.biomeProgress?.mastery?.boneDunes ?? 0) / 5, getDistanceProgress(target.distance, 7, 40) * 0.7),
+        targetKey: "boneDunes",
+      });
+    }
+
+    if (!apexReached) {
+      const target = targetRoute(apexBiomeKey);
+      return makeStep({
+        key: "pushApex",
+        index: 8,
+        title: `Push ${apexBiome.label}`,
+        summary: apexBiomeKey === "emberRidge"
+          ? "Climb the mountain route and prove the species can survive the harshest elevation."
+          : "Break into Jaw Basin and prove the line can survive true territorial war.",
+        detail: apexBiomeKey === "emberRidge"
+          ? `Species XP ${Math.round(this.state.speciesXp ?? 0)}/26`
+          : `Species XP ${Math.round(this.state.speciesXp ?? 0)}/18`,
+        progress: Math.max((this.state.speciesXp ?? 0) / (apexBiomeKey === "emberRidge" ? 26 : 18), getDistanceProgress(target.distance, 8, 52) * 0.72),
+        targetKey: apexBiomeKey,
+      });
+    }
+
+    return {
+      key: "openFrontier",
+      index: JOURNEY_STEP_COUNT,
+      total: JOURNEY_STEP_COUNT,
+      stepLabel: "Open Frontier",
+      title: "Open Frontier",
+      summary: "The route is established. Rotate between bodies, chase blueprints, and decide which frontier the species dominates next.",
+      detail: "Free hunt: the species has a full route through the frontier ring.",
+      progress: 100,
+      target: null,
+      complete: true,
+    };
+  }
+
+  refreshJourneyState(currentBiome = this.currentBiome ?? this.getCurrentBiome(this.player.group.position), { announce = this.state.mode === "playing" } = {}) {
+    const nextJourney = this.getJourneyState(currentBiome);
+    const previousJourney = this.currentJourney;
+    this.currentJourney = nextJourney;
+
+    if (announce && previousJourney && previousJourney.key !== nextJourney.key) {
+      this.state.message = `${previousJourney.title} complete. ${nextJourney.title} next.`;
+      this.setEcosystemNotice(`${nextJourney.stepLabel}: ${nextJourney.title}.`, 4.2);
+    }
+
+    return nextJourney;
+  }
+
   getPreferredSpawnPoint(creature = this.getActiveCreature()) {
     const hatchling = (creature?.growth ?? 1) < 1;
     if (hatchling) {
@@ -3281,9 +3542,9 @@ export class SporeSliceGame {
       this.state.pauseMenuOpen = false;
       this.clearFeralSurge();
       this.state.message = this.state.hasSave
-        ? "Your line still begins in water. Push through new frontier biomes, then bank the gains back at the nest."
-        : "A tiny organism wakes in the origin waters. Feed there first, then earn the first push onto shore.";
-      this.runStats.summary = "Fresh hunt. All life starts in the water, then branches outward through riskier frontiers.";
+        ? "Your line still begins in water. Follow the current journey step, then bank the gains back at the nest."
+        : "A tiny organism wakes in the origin waters. Feed there first, reach the shallows, then earn the first push onto shore.";
+      this.runStats.summary = "Fresh hunt. Follow the species journey from nursery waters into land frontiers, then bring the gains home.";
       this.state.startedAt = this.elapsed;
       this.state.editorOpen = false;
       this.renderer.domElement.focus();
@@ -3958,6 +4219,7 @@ export class SporeSliceGame {
       const dominantBiome = BIOME_DEFS[this.saveData.biomeProgress.dominantBiome] ?? BIOME_DEFS.originWaters;
       const activePath = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
       const nextBiomeUnlock = this.getNextBiomeUnlock();
+      const journey = this.currentJourney ?? this.refreshJourneyState(currentBiome, { announce: false });
       const nearbyFoods = sortByDistance(playerPosition, this.foods.filter((food) => food.active), (food, distance) => ({
         id: food.id,
         x: Number(food.group.position.x.toFixed(1)),
@@ -4023,6 +4285,7 @@ export class SporeSliceGame {
         editorTab: this.state.editorTab,
         message: this.state.message,
         objective: this.state.objective,
+        journey,
         ecosystemNotice: this.state.ecosystemNotice,
         speciesXp: Math.round(this.state.speciesXp),
         social: socialOpportunity
@@ -4398,6 +4661,8 @@ export class SporeSliceGame {
     this.applyActiveCreatureState({ preserveHealthRatio: false });
     this.resetEcosystemState();
     this.resetPlayerToNest(true);
+    this.currentJourney = null;
+    this.refreshJourneyState(this.getCurrentBiome(this.player.group.position), { announce: false });
     this.foods.forEach((food) => {
       food.active = true;
       food.respawnTimer = 0;
@@ -6182,38 +6447,16 @@ export class SporeSliceGame {
     this.state.zone = getZoneName(this.player.group.position);
     const currentBiome = this.getCurrentBiome(this.player.group.position);
     const activeFrontier = this.isBiomeUnlocked(currentBiome.key);
-    const activePath = this.playerStats.path ?? SPECIES_PATH_DEFS.nestling;
-    const shoreReadiness = this.player.terrain.shoreReadiness ?? this.playerStats.shoreReadiness ?? 0;
+    const journey = this.refreshJourneyState(currentBiome);
     this.currentBiome = currentBiome;
     this.state.biome = currentBiome.key;
 
     if (this.state.zone === "nest" && this.state.editorOpen) {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 18);
-      this.state.objective = "Creature Evolution shapes the next body. Species grows outward by hatching fresh life back into the origin waters.";
     } else if (this.state.zone === "nest") {
       this.player.health = Math.min(this.player.maxHealth, this.player.health + dt * 16);
-      this.state.objective = "Species nest: heal, spend DNA, lay an egg, then send the newborn back through the origin waters.";
-    } else if (this.state.zone === "danger") {
-      this.state.objective = "Jaw Basin: richer DNA, crater walls, and harder fights. Basin Falls can save a brutal landing if you hit the pool.";
-    } else if (!activeFrontier) {
-      this.state.objective = `${currentBiome.label} is still a hard frontier. Grow the species or return to the nest before claiming it.`;
-    } else if (!currentBiome.water && shoreReadiness < SHORE_READY_THRESHOLD) {
-      this.state.objective = `${activePath.label}: this body is still shore-soft. Make brief land runs, then evolve cleaner shoreline anatomy at the nest.`;
-    } else if (currentBiome.key === "originWaters") {
-      this.state.objective = `${activePath.label}: feed safely in the origin waters until the line is ready to break for shore.`;
-    } else if (currentBiome.key === "sunlitShallows") {
-      this.state.objective = `${activePath.label}: Sunlit Shallows are the first shoreline test before committing to a land route.`;
-    } else if (currentBiome.key === "glowMarsh") {
-      this.state.objective = `${activePath.label}: Glow Marsh rewards patient bodies that can hold momentum in soft ground.`;
-    } else if (currentBiome.key === "verdantForest") {
-      this.state.objective = `${activePath.label}: Verdant Forest trades open speed for cover, traction, and greener feeding lanes.`;
-    } else if (currentBiome.key === "saltFlats") {
-      this.state.objective = `${activePath.label}: Salt Flats reward bodies that can keep traction and survive long exposed sprints.`;
-    } else if (currentBiome.key === "emberRidge") {
-      this.state.objective = `${activePath.label}: Ember Ridge rewards heavy bodies that can climb hard ground, leap gaps, and trust the cascade pools on brutal descents.`;
-    } else {
-      this.state.objective = `${activePath.label}: Bone Dunes reward bodies that can hold speed and survive long exposed hunts.`;
     }
+    this.state.objective = `${journey.title}: ${journey.summary}`;
   }
 
   updateCamera(dt) {
@@ -6681,6 +6924,7 @@ export class SporeSliceGame {
     const currentBiome = this.currentBiome ?? this.getCurrentBiome(this.player.group.position);
     const dominantBiome = BIOME_DEFS[this.saveData.biomeProgress.dominantBiome] ?? BIOME_DEFS.originWaters;
     const nextBiomeUnlock = this.getNextBiomeUnlock();
+    const journey = this.currentJourney ?? this.refreshJourneyState(currentBiome, { announce: false });
     const unlockedBiomeEntries = this.saveData.biomeProgress.unlockedBiomes
       .map((biomeKey) => BIOME_DEFS[biomeKey])
       .filter(Boolean);
@@ -6813,6 +7057,7 @@ export class SporeSliceGame {
       biomeUnlocked: this.isBiomeUnlocked(currentBiome.key),
       dominantBiomeName: dominantBiome.label,
       dominantBiomeSummary: dominantBiome.summary,
+      journey,
       pathLabel: activePath.label,
       pathShortLabel: activePath.shortLabel,
       pathSummary: activePath.summary,
@@ -6890,6 +7135,17 @@ export class SporeSliceGame {
           bearing: Number(Math.atan2(nestDx, nestDz).toFixed(3)),
           atNest: this.state.zone === "nest",
         },
+        target: journey?.target
+          ? {
+              dx: Number((journey.target.x - playerPosition.x).toFixed(1)),
+              dz: Number((journey.target.z - playerPosition.z).toFixed(1)),
+              distance: Number(journey.target.distance.toFixed(1)),
+              bearing: Number(journey.target.bearing.toFixed(3)),
+              label: journey.target.label,
+              key: journey.target.key,
+              atTarget: journey.target.distance <= (journey.target.key === "nest" ? NEST_POSITION.radius : 6),
+            }
+          : null,
       },
       nearbySpecies,
       nearbyNests,
