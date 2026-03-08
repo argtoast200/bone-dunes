@@ -590,6 +590,89 @@ function createWaterSurface(radius, color, opacity) {
   return surface;
 }
 
+function createSkyCloud({
+  scale = 1,
+  color = 0xfff0dc,
+  shadowColor = 0xdfb993,
+  opacity = 0.54,
+  stretch = 1.9,
+  puffCount = 6,
+}) {
+  const cloud = new THREE.Group();
+
+  const puffMaterial = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    fog: false,
+  });
+  const shadowMaterial = new THREE.MeshBasicMaterial({
+    color: shadowColor,
+    transparent: true,
+    opacity: opacity * 0.58,
+    depthWrite: false,
+    fog: false,
+  });
+
+  const materials = [puffMaterial, shadowMaterial];
+
+  for (let index = 0; index < puffCount; index += 1) {
+    const angle = (index / puffCount) * Math.PI * 2 + (index % 2 === 0 ? 0.25 : -0.18);
+    const radius = 0.8 + (index % 3) * 0.34;
+    const size = 0.85 + (index % 4) * 0.18;
+    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 0), puffMaterial);
+    puff.position.set(
+      Math.cos(angle) * radius * scale * 0.95,
+      (index % 2 === 0 ? 0.35 : -0.1) * scale + Math.sin(index * 1.3) * 0.18 * scale,
+      Math.sin(angle) * radius * scale * 0.42,
+    );
+    puff.scale.set(stretch * (1 + index * 0.04), 0.7 + (index % 3) * 0.08, 1.15 + (index % 2) * 0.16);
+    cloud.add(puff);
+  }
+
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, 0), puffMaterial);
+  core.position.y = 0.28 * scale;
+  core.scale.set(stretch * 1.35, 0.9, 1.4);
+  cloud.add(core);
+
+  for (let index = 0; index < 2; index += 1) {
+    const underbelly = new THREE.Mesh(new THREE.IcosahedronGeometry(1.05 - index * 0.08, 0), shadowMaterial);
+    underbelly.position.set(index === 0 ? -0.55 * scale : 0.72 * scale, -0.42 * scale, index === 0 ? -0.22 * scale : 0.16 * scale);
+    underbelly.scale.set(stretch * (1.15 - index * 0.12), 0.44, 1.02);
+    cloud.add(underbelly);
+  }
+
+  cloud.userData.materials = materials;
+  cloud.renderOrder = 2;
+  return cloud;
+}
+
+function createCloudField(definitions) {
+  const group = new THREE.Group();
+  const clouds = definitions.map((definition, index) => {
+    const cloud = createSkyCloud(definition);
+    cloud.position.set(definition.x, definition.y, definition.z);
+    cloud.rotation.y = definition.rotation ?? 0;
+    group.add(cloud);
+    return {
+      group: cloud,
+      materials: cloud.userData.materials,
+      basePosition: new THREE.Vector3(definition.x, definition.y, definition.z),
+      bob: definition.bob ?? 0.45,
+      driftX: definition.driftX ?? 0.8,
+      driftZ: definition.driftZ ?? 0.5,
+      speed: definition.speed ?? 0.06,
+      phase: definition.phase ?? index * 0.7,
+      pulse: definition.pulse ?? 0.03,
+      opacity: definition.opacity ?? 0.4,
+      rotationSpeed: definition.rotationSpeed ?? 0.01,
+    };
+  });
+
+  return { group, clouds };
+}
+
 function createCarrionBird(scale, color) {
   const bird = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
@@ -1025,6 +1108,108 @@ export function buildWorld(scene) {
   sunHalo.position.copy(sun.position);
   world.add(sunHalo);
 
+  const cloudField = createCloudField([
+    {
+      x: -22,
+      y: 18.8,
+      z: 18,
+      scale: 10.8,
+      stretch: 2.8,
+      opacity: 0.6,
+      driftX: 1.25,
+      driftZ: 0.68,
+      bob: 0.34,
+      speed: 0.04,
+      phase: 0.2,
+      rotation: 0.18,
+    },
+    {
+      x: -10,
+      y: 36,
+      z: -34,
+      scale: 4.6,
+      stretch: 2.35,
+      opacity: 0.36,
+      driftX: 1.1,
+      driftZ: 1,
+      bob: 0.55,
+      speed: 0.035,
+      phase: 1.1,
+      rotation: -0.25,
+    },
+    {
+      x: 8,
+      y: 18.2,
+      z: 10,
+      scale: 9.4,
+      stretch: 2.7,
+      opacity: 0.58,
+      driftX: 0.92,
+      driftZ: 0.64,
+      bob: 0.32,
+      speed: 0.038,
+      phase: 2.6,
+      rotation: 0.34,
+    },
+    {
+      x: 28,
+      y: 18.8,
+      z: -4,
+      scale: 8.8,
+      stretch: 2.8,
+      opacity: 0.56,
+      driftX: 1.12,
+      driftZ: 0.86,
+      bob: 0.4,
+      speed: 0.032,
+      phase: 3.3,
+      rotation: -0.24,
+    },
+    {
+      x: 30,
+      y: 18.4,
+      z: 27,
+      scale: 3.1,
+      stretch: 2.05,
+      opacity: 0.3,
+      driftX: 0.6,
+      driftZ: 0.4,
+      bob: 0.28,
+      speed: 0.052,
+      phase: 4.4,
+      rotation: 0.28,
+    },
+    {
+      x: 19,
+      y: 19.2,
+      z: -9,
+      scale: 3.4,
+      stretch: 2.15,
+      opacity: 0.31,
+      driftX: 0.72,
+      driftZ: 0.46,
+      bob: 0.3,
+      speed: 0.05,
+      phase: 5.2,
+      rotation: -0.42,
+    },
+    {
+      x: -20,
+      y: 28.5,
+      z: 24,
+      scale: 3.7,
+      stretch: 2.1,
+      opacity: 0.32,
+      driftX: 1,
+      driftZ: 0.62,
+      bob: 0.35,
+      speed: 0.042,
+      phase: 6.1,
+      rotation: 0.18,
+    },
+  ]);
+  world.add(cloudField.group);
+
   const moon = new THREE.Mesh(
     new THREE.IcosahedronGeometry(3.2, 0),
     new THREE.MeshBasicMaterial({
@@ -1073,6 +1258,7 @@ export function buildWorld(scene) {
       { mesh: shorelineWater, baseY: ORIGIN_POOL.surfaceY + 0.18, drift: 0.04, scale: 0.015, phase: 1.1 },
     ],
     sunHalo,
+    skyClouds: cloudField.clouds,
     skyFlocks: [carrionFlock, highFlock],
   };
 }

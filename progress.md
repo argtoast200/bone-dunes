@@ -757,3 +757,30 @@ Additional biome pass:
     - that landing reduced health from `120` to `51`, applying `69` fall damage with message `The landing hammers you for 69. High ground is faster than falling bodies.`
   - browser console review:
     - no new console errors beyond the React DevTools info banner
+
+## 2026-03-07 Cloud Atmosphere Pass
+
+- Current request:
+  - add clouds so the world sky reads as more alive and layered instead of a flat fog gradient
+- Implemented:
+  - added a lightweight low-poly sky cloud system in `src/game/world.js` built from clustered flattened icosahedrons rather than a heavy particle or volumetric effect
+  - placed a mix of broad horizon cloud banks and lower mountain-adjacent clouds so the highland biomes feel bigger and the nursery waters do not sit under a completely empty sky
+  - threaded cloud metadata into the returned world object and animated it in `src/game/SporeSliceGame.js` alongside the existing dust, water, halo, and flock atmosphere updates
+  - tuned cloud drift, bob, pulse, and opacity so they move slowly enough to feel environmental rather than distracting
+- Validation:
+  - `npm run build` passes after the cloud pass
+  - required standalone `$WEB_GAME_CLIENT` runs completed:
+    - `output/web-game/cloud-pass-1/shot-0.png`
+    - `output/web-game/cloud-pass-1/state-0.json`
+    - `output/web-game/cloud-pass-4/shot-0.png`
+    - `output/web-game/cloud-pass-4/state-0.json`
+  - saved controlled atmosphere capture:
+    - `output/web-game/cloud-pass-4/cloud-cinematic.png`
+  - visual inspection:
+    - the generic origin-water autostart camera still hides much of the sky behind nearby foreground rocks, so it is a weak atmosphere showcase
+    - the controlled wide shot clearly shows multiple cloud banks layered over the dunes and nest route without overpowering the biome palette
+  - deterministic browser checks:
+    - the live world exposes `7` animated cloud groups through `game.world.skyClouds`
+    - cloud groups were sampled at horizon and mountain heights, including low banks near `(-20.79, 18.46, 17.92)`, `(7.22, 18.44, 9.5)`, and `(26.89, 19.19, -4.39)`
+  - browser console review:
+    - fresh page load is clean aside from the React DevTools info banner

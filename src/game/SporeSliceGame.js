@@ -6282,6 +6282,21 @@ export class SporeSliceGame {
         layer.material.opacity = (index === 0 ? 0.18 : 0.1) + Math.sin(this.elapsed * (0.35 + index * 0.18)) * 0.02;
       });
     }
+    if (this.world.skyClouds) {
+      this.world.skyClouds.forEach((cloud, cloudIndex) => {
+        const driftTime = this.elapsed * cloud.speed + cloud.phase;
+        cloud.group.position.x = cloud.basePosition.x + Math.sin(driftTime) * cloud.driftX;
+        cloud.group.position.y = cloud.basePosition.y + Math.sin(this.elapsed * (cloud.speed * 0.8 + 0.08) + cloud.phase) * cloud.bob;
+        cloud.group.position.z = cloud.basePosition.z + Math.cos(driftTime * 0.92) * cloud.driftZ;
+        cloud.group.rotation.y += dt * cloud.rotationSpeed;
+        const swell = 1 + Math.sin(this.elapsed * (cloud.speed * 0.7 + 0.05) + cloud.phase) * cloud.pulse;
+        cloud.group.scale.setScalar(swell);
+        cloud.materials.forEach((material, materialIndex) => {
+          const baseOpacity = cloud.opacity * (materialIndex === 0 ? 1 : 0.48);
+          material.opacity = baseOpacity + Math.sin(this.elapsed * (0.18 + cloudIndex * 0.02) + cloud.phase) * 0.02;
+        });
+      });
+    }
     if (this.world.waterSurfaces) {
       this.world.waterSurfaces.forEach((surface, index) => {
         surface.mesh.position.y = surface.baseY + Math.sin(this.elapsed * (0.75 + index * 0.18) + surface.phase) * surface.drift;
